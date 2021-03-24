@@ -8,7 +8,7 @@ func TestMessageHub(t *testing.T) {
 	id1 := "1"
 	id2 := "2"
 
-	newChatRoom1, err := messageHub.NewChatRoom(id1)
+	newChatRoom1, err := messageHub.NewChatRoom(id1, 100)
 	if err != nil {
 		t.Fatalf("failed to create initial chat room id[%s]: %s", id1, err)
 	}
@@ -18,7 +18,7 @@ func TestMessageHub(t *testing.T) {
 		t.Fatalf("should get the same chatroom for same id - id[%s]", id1)
 	}
 
-	newChatRoom2, err := messageHub.NewChatRoom(id2)
+	newChatRoom2, err := messageHub.NewChatRoom(id2, 100)
 	if err != nil {
 		t.Fatalf("failed to create initial chat room id[%s]: %s", id2, err)
 	}
@@ -32,7 +32,7 @@ func TestMessageHub(t *testing.T) {
 		t.Fatalf("new chatrooms should not references other chatrooms")
 	}
 
-	_, err = messageHub.NewChatRoom(id1)
+	_, err = messageHub.NewChatRoom(id1, 100)
 	if err == nil {
 		t.Fatalf("should return an error for creating a chatroom with same id")
 	}

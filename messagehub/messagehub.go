@@ -19,14 +19,14 @@ func New() *MessageHub {
 }
 
 // NewChatRoom creates a new chatroom.
-func (hub *MessageHub) NewChatRoom(id string) (*ChatRoom, error) {
+func (hub *MessageHub) NewChatRoom(id string, bufferSize int) (*ChatRoom, error) {
 	hub.mtx.Lock()
 	defer hub.mtx.Unlock()
 	_, ok := hub.chatRooms[id]
 	if ok {
 		return nil, errors.Errorf("chatroom %s already exists", id)
 	}
-	chatRoom := NewChatRoom()
+	chatRoom := NewChatRoom(id, bufferSize)
 	hub.chatRooms[id] = chatRoom
 	return chatRoom, nil
 }

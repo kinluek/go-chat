@@ -1,5 +1,7 @@
 package messagehub
 
+import "time"
+
 const (
 	// EventTypeMessage is the event type for when a message is sent to the chat.
 	EventTypeMessage = "message"
@@ -10,16 +12,18 @@ const (
 	// EventTypeLeave happens when a client leaves the chat
 	EventTypeLeave = "leave"
 
-	// EventTypeClosed happens when the chat is closed
-	EventTypeClosed = "closed"
+	// EventTypeClose happens when the chat is closed
+	EventTypeClose = "close"
 )
 
 // Event is what clients in the chatroom receive when an event happens.
 // This could either be a message, someone joining or leaving the chat room.
 type Event struct {
-	Type    string
-	UserID  string
-	Message []byte // Message will be non-nil when Type is "message"
+	ID       int
+	Type     string
+	UserID   string
+	Message  []byte // Message will be non-nil when Type is "message"
+	UnixTime int64
 }
 
 type request struct {
@@ -30,22 +34,50 @@ type request struct {
 
 // ChatRoom represents a chat room and handles the message passing between clients
 type ChatRoom struct {
-	clients     map[string]chan<- Event // key = userid
-	requests    chan request
-	eventBuffer []Event
-	eventCount  int
+	id         string
+	clients    map[string]chan<- Event // key = userid
+	requests   chan request
+	eventCount int
+
+	// buffer holds the last n (bufferSize) events in memory
+	// the buffer is updated in a circular fashion for performance
+	// so the head and tail of the buffer must be tracked.
+	buffer     []Event
+	bufferSize int
+	bufferHead int
+	bufferTail int
 
 	closed   chan struct{}
 	closeSig chan struct{}
 }
 
 // NewChatRoom creates a new ChatRoom that is ready to accept requests.
-func NewChatRoom() *ChatRoom {
+// The ChatRoom must be given an id and a bufferSize, the bufferSize defines
+// how many events the ChatRoom can hold in memory, these in memory events
+// can let new clients joining the ChatRoom efficiently catchup with recent messages.
+//
+// Max bufferSize is 1024.
+// Min bufferSize is 1.
+func NewChatRoom(id string, bufferSize int) *ChatRoom {
+
+	// having a minimum buffer size of one means
+	// we don't have to add extra logic to handle empty
+	// buffers
+	if bufferSize < 1 {
+		bufferSize = 1
+	}
+	if bufferSize > 1024 {
+		bufferSize = 1024
+	}
+
 	chatRoom := &ChatRoom{
-		clients:     make(map[string]chan<- Event),
-		requests:    make(chan request, 1024),
-		eventBuffer: make([]Event, 0, 1024),
-		closed:      make(chan struct{}),
+		clients:  make(map[string]chan<- Event),
+		requests: make(chan request, 1024),
+
+		buffer:     make([]Event, bufferSize),
+		bufferSize: bufferSize,
+
+		closed: make(chan struct{}),
 	}
 	go chatRoom.serve()
 	return chatRoom
@@ -127,31 +159,42 @@ func (c *ChatRoom) serve() {
 		select {
 		case req := <-c.requests:
 			c.eventCount++
-			c.eventBuffer = append(c.eventBuffer, req.event)
 
-			switch req.event.Type {
+			event := req.event
+			event.ID = c.eventCount
+			event.UnixTime = time.Now().Unix()
+
+			c.updateBuffer(event)
+
+			// handle request based on event type.
+			switch event.Type {
 			case EventTypeMessage:
-				c.publishEvent(req.event)
+				c.publishEvent(event)
+
 			case EventTypeJoin:
-				if _, ok := c.clients[req.event.UserID]; !ok {
-					c.clients[req.event.UserID] = req.eventStream
+				if _, ok := c.clients[event.UserID]; !ok {
+					c.clients[event.UserID] = req.eventStream
 					close(req.done)
-					c.publishEvent(req.event)
+					c.publishEvent(event)
 					continue
 				}
-				c.clients[req.event.UserID] = req.eventStream
+				c.clients[event.UserID] = req.eventStream
 				close(req.done)
+
 			case EventTypeLeave:
-				if _, ok := c.clients[req.event.UserID]; ok {
-					delete(c.clients, req.event.UserID)
+				if _, ok := c.clients[event.UserID]; ok {
+					delete(c.clients, event.UserID)
 					close(req.done)
-					c.publishEvent(req.event)
+					c.publishEvent(event)
 					continue
 				}
 				close(req.done)
 			}
+
 		case <-c.closeSig:
-			event := Event{Type: EventTypeClosed}
+			event := Event{
+				Type: EventTypeClose,
+			}
 			c.publishEvent(event)
 			close(c.closed)
 			return
@@ -173,5 +216,19 @@ func (c *ChatRoom) publishEvent(event Event) {
 	}
 }
 
-// TODO: Add in-memory events buffer for clients to read from when
-// reconnecting or missed events.
+// updateBuffer updates the buffer in a circular fashion.
+func (c *ChatRoom) updateBuffer(event Event) {
+	if c.eventCount > 1 {
+		c.bufferHead++
+		if c.bufferHead == c.bufferSize {
+			c.bufferHead = 0
+		}
+		if c.eventCount > c.bufferSize {
+			c.bufferTail++
+		}
+		if c.bufferTail == c.bufferSize {
+			c.bufferTail = 0
+		}
+	}
+	c.buffer[c.bufferHead] = event
+}
