@@ -26,10 +26,18 @@ type Event struct {
 	UnixTime int64
 }
 
+type eventBufferSet struct {
+	events  []Event
+	head    int
+	tail    int
+	isEmpty bool
+}
+
 type request struct {
-	event       Event
-	eventStream chan<- Event
-	done        chan struct{}
+	event         Event
+	eventStream   chan<- Event
+	catchUpEvents chan eventBufferSet
+	done          chan struct{}
 }
 
 // ChatRoom represents a chat room and handles the message passing between clients
@@ -100,17 +108,19 @@ func (c *ChatRoom) Message(senderID string, message []byte) {
 	}
 }
 
-// Join adds a new user to the ChatRoom. The user must provide an event stream
-// to listen ChatRoom Events.
-func (c *ChatRoom) Join(userID string, eventStream chan<- Event) {
+// Join adds a new user to the ChatRoom. The event stream to listen on and any
+// recent events are returned.
+// The recent events are ordered from oldest to most recent.
+func (c *ChatRoom) Join(userID string, streamBuffer int) (<-chan Event, []Event) {
+	eventStream := make(chan Event, streamBuffer)
 	event := Event{
 		Type:   EventTypeJoin,
 		UserID: userID,
 	}
 	req := request{
-		event:       event,
-		eventStream: eventStream,
-		done:        make(chan struct{}),
+		event:         event,
+		eventStream:   eventStream,
+		catchUpEvents: make(chan eventBufferSet, 1),
 	}
 
 	select {
@@ -121,8 +131,10 @@ func (c *ChatRoom) Join(userID string, eventStream chan<- Event) {
 	// the chatroom server may be closed while the request is in
 	// the requests buffer and the done signal may never be received.
 	select {
-	case <-req.done:
+	case set := <-req.catchUpEvents:
+		return eventStream, sortEventsBuffer(set.events, set.head, set.tail)
 	case <-c.closed:
+		return eventStream, nil
 	}
 }
 
@@ -172,14 +184,21 @@ func (c *ChatRoom) serve() {
 				c.publishEvent(event)
 
 			case EventTypeJoin:
+				eventSet := eventBufferSet{
+					events: make([]Event, c.bufferSize),
+					head:   c.bufferHead,
+					tail:   c.bufferTail,
+				}
+				copy(eventSet.events, c.buffer)
+
 				if _, ok := c.clients[event.UserID]; !ok {
 					c.clients[event.UserID] = req.eventStream
-					close(req.done)
+					req.catchUpEvents <- eventSet
 					c.publishEvent(event)
 					continue
 				}
 				c.clients[event.UserID] = req.eventStream
-				close(req.done)
+				req.catchUpEvents <- eventSet
 
 			case EventTypeLeave:
 				if _, ok := c.clients[event.UserID]; ok {
@@ -231,4 +250,29 @@ func (c *ChatRoom) updateBuffer(event Event) {
 		}
 	}
 	c.buffer[c.bufferHead] = event
+}
+
+// sortEventsBuffer takes a circular events buffer with knowledge of where
+// the head and tail is and reorders the events from oldest to newest.
+// Any empty elements are removed.
+func sortEventsBuffer(events []Event, head, tail int) []Event {
+	if len(events) == 0 {
+		return events
+	}
+
+	i := 0
+	size := len(events)
+	sorted := make([]Event, size)
+	for {
+		sorted[i] = events[tail]
+		if tail == head {
+			break
+		}
+		i++
+		tail++
+		if tail == size {
+			tail = 0
+		}
+	}
+	return sorted[:i+1]
 }

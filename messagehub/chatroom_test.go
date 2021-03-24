@@ -17,13 +17,26 @@ func TestChatRoom(t *testing.T) {
 		events chan Event
 	}
 
-	user1 := user{id: "user1", events: make(chan Event, 10)}
-	user2 := user{id: "user2", events: make(chan Event, 10)}
-	user3 := user{id: "user3", events: make(chan Event, 10)}
+	user1Events, pastEvents1 := chatRoom.Join("user1", 10)
+	user2Events, pastEvents2 := chatRoom.Join("user2", 10)
+	user3Events, pastEvents3 := chatRoom.Join("user3", 10)
 
-	chatRoom.Join(user1.id, user1.events)
-	chatRoom.Join(user2.id, user2.events)
-	chatRoom.Join(user3.id, user3.events)
+	expectedPastEvents1 := []Event{
+		{ID: 1, Type: "join", UserID: "user1", Message: nil},
+	}
+	expectedPastEvents2 := []Event{
+		{ID: 1, Type: "join", UserID: "user1", Message: nil},
+		{ID: 2, Type: "join", UserID: "user2", Message: nil},
+	}
+	expectedPastEvents3 := []Event{
+		{ID: 1, Type: "join", UserID: "user1", Message: nil},
+		{ID: 2, Type: "join", UserID: "user2", Message: nil},
+		{ID: 3, Type: "join", UserID: "user3", Message: nil},
+	}
+
+	assert.Equal(t, expectedPastEvents1, removeTime(pastEvents1), "user1 should get the correct past events when joining")
+	assert.Equal(t, expectedPastEvents2, removeTime(pastEvents2), "user2 should get the correct past events when joining")
+	assert.Equal(t, expectedPastEvents3, removeTime(pastEvents3), "user3 should get the correct past events when joining")
 
 	user1ReceivedEvents := make([]Event, 0)
 	user2ReceivedEvents := make([]Event, 0)
@@ -34,7 +47,7 @@ func TestChatRoom(t *testing.T) {
 
 	go func() {
 		defer wg.Done()
-		for event := range user1.events {
+		for event := range user1Events {
 			user1ReceivedEvents = append(user1ReceivedEvents, event)
 			if event.Type == EventTypeMessage {
 				return
@@ -44,7 +57,7 @@ func TestChatRoom(t *testing.T) {
 
 	go func() {
 		defer wg.Done()
-		for event := range user2.events {
+		for event := range user2Events {
 			user2ReceivedEvents = append(user2ReceivedEvents, event)
 			if event.Type == EventTypeMessage {
 				return
@@ -54,7 +67,7 @@ func TestChatRoom(t *testing.T) {
 
 	go func() {
 		defer wg.Done()
-		for event := range user3.events {
+		for event := range user3Events {
 			user3ReceivedEvents = append(user3ReceivedEvents, event)
 			if event.Type == EventTypeMessage {
 				return
@@ -188,8 +201,7 @@ func TestChatRoom_updateBuffer(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			chatRoom := NewChatRoom("id", tt.bufferSize)
-			events := make(chan Event, tt.eventCount)
-			chatRoom.Join("userid", events)
+			events, _ := chatRoom.Join("userid", tt.eventCount)
 
 			errs := make(chan error, 1)
 
@@ -230,6 +242,127 @@ func TestChatRoom_updateBuffer(t *testing.T) {
 			assert.Equal(t, tt.wantHead, chatRoom.bufferHead, "head should equal")
 			assert.Equal(t, tt.wantTail, chatRoom.bufferTail, "tail should equal")
 			assert.Equal(t, tt.wantBuffer, removeTime(chatRoom.buffer), "events in buffer should equal")
+		})
+	}
+}
+
+func Test_sortEventsBuffer(t *testing.T) {
+	tests := []struct {
+		name        string
+		head        int
+		tail        int
+		inputEvents []Event
+		wantEvents  []Event
+	}{
+		{
+			name:        "nil-events",
+			head:        0,
+			tail:        0,
+			inputEvents: nil,
+			wantEvents:  nil,
+		},
+		{
+			name:        "empty-events",
+			head:        0,
+			tail:        0,
+			inputEvents: []Event{},
+			wantEvents:  []Event{},
+		},
+		{
+			name: "1-event-needs-trimming",
+			head: 0,
+			tail: 0,
+			inputEvents: []Event{
+				{ID: 1, Type: EventTypeJoin, UserID: "userid"},
+				{},
+				{},
+				{},
+				{},
+			},
+			wantEvents: []Event{
+				{ID: 1, Type: EventTypeJoin, UserID: "userid"},
+			},
+		},
+		{
+			name: "3-event-needs-trimming",
+			head: 2,
+			tail: 0,
+			inputEvents: []Event{
+				{ID: 1, Type: EventTypeJoin, UserID: "userid"},
+				{ID: 2, Type: EventTypeJoin, UserID: "userid"},
+				{ID: 3, Type: EventTypeJoin, UserID: "userid"},
+				{},
+				{},
+			},
+			wantEvents: []Event{
+				{ID: 1, Type: EventTypeJoin, UserID: "userid"},
+				{ID: 2, Type: EventTypeJoin, UserID: "userid"},
+				{ID: 3, Type: EventTypeJoin, UserID: "userid"},
+			},
+		},
+		{
+			name: "full-buffer-already-ordered",
+			head: 4,
+			tail: 0,
+			inputEvents: []Event{
+				{ID: 1, Type: EventTypeJoin, UserID: "userid"},
+				{ID: 2, Type: EventTypeJoin, UserID: "userid"},
+				{ID: 3, Type: EventTypeJoin, UserID: "userid"},
+				{ID: 4, Type: EventTypeJoin, UserID: "userid"},
+				{ID: 5, Type: EventTypeJoin, UserID: "userid"},
+			},
+			wantEvents: []Event{
+				{ID: 1, Type: EventTypeJoin, UserID: "userid"},
+				{ID: 2, Type: EventTypeJoin, UserID: "userid"},
+				{ID: 3, Type: EventTypeJoin, UserID: "userid"},
+				{ID: 4, Type: EventTypeJoin, UserID: "userid"},
+				{ID: 5, Type: EventTypeJoin, UserID: "userid"},
+			},
+		},
+		{
+			name: "wrapped-around",
+			head: 0,
+			tail: 1,
+			inputEvents: []Event{
+				{ID: 6, Type: EventTypeJoin, UserID: "userid"},
+				{ID: 2, Type: EventTypeJoin, UserID: "userid"},
+				{ID: 3, Type: EventTypeJoin, UserID: "userid"},
+				{ID: 4, Type: EventTypeJoin, UserID: "userid"},
+				{ID: 5, Type: EventTypeJoin, UserID: "userid"},
+			},
+			wantEvents: []Event{
+				{ID: 2, Type: EventTypeJoin, UserID: "userid"},
+				{ID: 3, Type: EventTypeJoin, UserID: "userid"},
+				{ID: 4, Type: EventTypeJoin, UserID: "userid"},
+				{ID: 5, Type: EventTypeJoin, UserID: "userid"},
+				{ID: 6, Type: EventTypeJoin, UserID: "userid"},
+			},
+		},
+		{
+			name: "wrapped-around-twice",
+			head: 1,
+			tail: 2,
+			inputEvents: []Event{
+				{ID: 11, Type: EventTypeJoin, UserID: "userid"},
+				{ID: 12, Type: EventTypeJoin, UserID: "userid"},
+				{ID: 8, Type: EventTypeJoin, UserID: "userid"},
+				{ID: 9, Type: EventTypeJoin, UserID: "userid"},
+				{ID: 10, Type: EventTypeJoin, UserID: "userid"},
+			},
+			wantEvents: []Event{
+				{ID: 8, Type: EventTypeJoin, UserID: "userid"},
+				{ID: 9, Type: EventTypeJoin, UserID: "userid"},
+				{ID: 10, Type: EventTypeJoin, UserID: "userid"},
+				{ID: 11, Type: EventTypeJoin, UserID: "userid"},
+				{ID: 12, Type: EventTypeJoin, UserID: "userid"},
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := sortEventsBuffer(tt.inputEvents, tt.head, tt.tail)
+			assert.Equal(t, tt.wantEvents, got, "sorted events should match wanted")
 		})
 	}
 }
