@@ -42,18 +42,27 @@ type eventBufferSet struct {
 	isEmpty bool
 }
 
-type request struct {
-	event         Event
+// Request are created and sent through the ChatRoom, they can be
+// intercepted with middleware.
+type Request struct {
+	Event         Event
 	eventStream   chan<- Event
 	catchUpEvents chan eventBufferSet
 	done          chan struct{}
 }
 
+// MiddleWare can be attached to the ChatRoom, all requests will be streamed
+// through the middleware in an orderly fashion. The channel returned by
+// the middleware should not be buffered, this ensures that the requests
+// are pulled through correctly.
+type MiddleWare func(<-chan Request) <-chan Request
+
 // ChatRoom represents a chat room and handles the message passing between clients
 type ChatRoom struct {
 	id         string
 	clients    map[string]chan<- Event // key = userid
-	requests   chan request
+	requests   chan Request
+	mids       []MiddleWare
 	eventCount int
 
 	// buffer holds the last n (bufferSize) events in memory
@@ -75,7 +84,7 @@ type ChatRoom struct {
 //
 // Max bufferSize is 1024.
 // Min bufferSize is 1.
-func NewChatRoom(id string, bufferSize int) *ChatRoom {
+func NewChatRoom(id string, bufferSize int, mids ...MiddleWare) *ChatRoom {
 
 	// having a minimum buffer size of one means
 	// we don't have to add extra logic to handle empty
@@ -89,7 +98,8 @@ func NewChatRoom(id string, bufferSize int) *ChatRoom {
 
 	chatRoom := &ChatRoom{
 		clients:  make(map[string]chan<- Event),
-		requests: make(chan request, 1024),
+		requests: make(chan Request, 1024),
+		mids:     mids,
 
 		buffer:     make([]Event, bufferSize),
 		bufferSize: bufferSize,
@@ -108,7 +118,7 @@ func (c *ChatRoom) Message(senderID string, message []byte) {
 		UserID:  senderID,
 		Message: message,
 	}
-	req := request{event: event}
+	req := Request{Event: event}
 
 	// The chatroom server may already be closed so we
 	// must select over the channels to prevent blocking.
@@ -127,8 +137,8 @@ func (c *ChatRoom) Join(userID string, streamBuffer int) (<-chan Event, []Event,
 		Type:   EventTypeJoin,
 		UserID: userID,
 	}
-	req := request{
-		event:         event,
+	req := Request{
+		Event:         event,
 		eventStream:   eventStream,
 		catchUpEvents: make(chan eventBufferSet, 1),
 	}
@@ -157,8 +167,8 @@ func (c *ChatRoom) Leave(userID string) error {
 		Type:   EventTypeLeave,
 		UserID: userID,
 	}
-	req := request{
-		event: event,
+	req := Request{
+		Event: event,
 		done:  make(chan struct{}),
 	}
 	select {
@@ -179,8 +189,8 @@ func (c *ChatRoom) Close() error {
 	event := Event{
 		Type: EventTypeClose,
 	}
-	req := request{
-		event: event,
+	req := Request{
+		Event: event,
 		done:  make(chan struct{}),
 	}
 	select {
@@ -198,12 +208,15 @@ func (c *ChatRoom) Close() error {
 // serve is ran in the background to serve and synchronize requests
 // through the ChatRoom.
 func (c *ChatRoom) serve() {
-	for req := range c.requests {
-		c.eventCount++
 
-		event := req.event
-		event.ID = c.eventCount
-		event.UnixTime = time.Now().Unix()
+	// apply generator middleware first
+	requestStream := wrapMiddleware(c.requests, c.generator)
+
+	// apply custom middleware
+	requestStream = wrapMiddleware(requestStream, c.mids...)
+
+	for req := range requestStream {
+		event := req.Event
 
 		c.updateBuffer(event)
 
@@ -257,6 +270,39 @@ func (c *ChatRoom) publishEvent(event Event) {
 			// from blocking.
 		}
 	}
+}
+
+// generator is the first middleware that is applied to the request stream
+// and applies the sequential id and timestamps to events. It also closes
+// the outputted request stream once the ChatRoom is closed so that other
+// middleware know when to exit.
+func (c *ChatRoom) generator(in <-chan Request) <-chan Request {
+	out := make(chan Request)
+	go func() {
+		for {
+			select {
+			case req := <-in:
+				c.eventCount++
+				req.Event.ID = c.eventCount
+				req.Event.UnixTime = time.Now().Unix()
+				out <- req
+			case <-c.closed:
+				close(out)
+				return
+			}
+		}
+	}()
+	return out
+}
+
+func wrapMiddleware(requests <-chan Request, middleware ...MiddleWare) <-chan Request {
+	for i := 0; i < len(middleware); i++ {
+		mw := middleware[i]
+		if mw != nil {
+			requests = mw(requests)
+		}
+	}
+	return requests
 }
 
 // updateBuffer updates the buffer in a circular fashion.

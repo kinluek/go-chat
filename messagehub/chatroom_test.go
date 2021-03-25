@@ -2,6 +2,7 @@ package messagehub
 
 import (
 	"errors"
+	"fmt"
 	"sync"
 	"testing"
 	"time"
@@ -11,11 +12,6 @@ import (
 
 func TestChatRoom(t *testing.T) {
 	chatRoom := NewChatRoom("chatroomid", 10)
-
-	type user struct {
-		id     string
-		events chan Event
-	}
 
 	user1Events, pastEvents1, err := chatRoom.Join("user1", 10)
 	if err != nil {
@@ -408,6 +404,57 @@ func Test_sortEventsBuffer(t *testing.T) {
 			assert.Equal(t, tt.wantEvents, got, "sorted events should match wanted")
 		})
 	}
+}
+
+func TestChatRoom_Middleware(t *testing.T) {
+
+	wg := sync.WaitGroup{}
+	wg.Add(2)
+
+	// Set up middleware which intercepts and stores the events.
+	storageEvents := make([]Event, 0)
+	storageMiddleware := func(in <-chan Request) <-chan Request {
+		out := make(chan Request)
+		go func() {
+			defer wg.Done()
+			for req := range in {
+				fmt.Printf("middleware event - %v\n", req.Event)
+				storageEvents = append(storageEvents, req.Event)
+				out <- req
+			}
+		}()
+		return out
+	}
+
+	chatRoom := NewChatRoom("chatroomid", 10, storageMiddleware)
+
+	userEvents, _, err := chatRoom.Join("user1", 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	userReceivedEvents := make([]Event, 0)
+
+	go func() {
+		defer wg.Done()
+		for event := range userEvents {
+			fmt.Printf("user event - %v\n", event)
+			userReceivedEvents = append(userReceivedEvents, event)
+			if event.Type == EventTypeClose {
+				return
+			}
+		}
+	}()
+
+	chatRoom.Message("send-id", []byte("message1"))
+	chatRoom.Message("send-id", []byte("message2"))
+	chatRoom.Message("send-id", []byte("message3"))
+	chatRoom.Close()
+
+	wg.Wait()
+
+	assert.Equal(t, storageEvents, userReceivedEvents, "middleware events should be equal to user received events")
+
 }
 
 // removeTime removes the timestamp for comparison as this will be non-deterministic.
