@@ -17,21 +17,30 @@ func TestChatRoom(t *testing.T) {
 		events chan Event
 	}
 
-	user1Events, pastEvents1 := chatRoom.Join("user1", 10)
-	user2Events, pastEvents2 := chatRoom.Join("user2", 10)
-	user3Events, pastEvents3 := chatRoom.Join("user3", 10)
+	user1Events, pastEvents1, err := chatRoom.Join("user1", 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	user2Events, pastEvents2, err := chatRoom.Join("user2", 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	user3Events, pastEvents3, err := chatRoom.Join("user3", 10)
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	expectedPastEvents1 := []Event{
-		{ID: 1, Type: "join", UserID: "user1", Message: nil},
+		{ID: 1, Type: "join", UserID: "user1"},
 	}
 	expectedPastEvents2 := []Event{
-		{ID: 1, Type: "join", UserID: "user1", Message: nil},
-		{ID: 2, Type: "join", UserID: "user2", Message: nil},
+		{ID: 1, Type: "join", UserID: "user1"},
+		{ID: 2, Type: "join", UserID: "user2"},
 	}
 	expectedPastEvents3 := []Event{
-		{ID: 1, Type: "join", UserID: "user1", Message: nil},
-		{ID: 2, Type: "join", UserID: "user2", Message: nil},
-		{ID: 3, Type: "join", UserID: "user3", Message: nil},
+		{ID: 1, Type: "join", UserID: "user1"},
+		{ID: 2, Type: "join", UserID: "user2"},
+		{ID: 3, Type: "join", UserID: "user3"},
 	}
 
 	assert.Equal(t, expectedPastEvents1, removeTime(pastEvents1), "user1 should get the correct past events when joining")
@@ -46,11 +55,13 @@ func TestChatRoom(t *testing.T) {
 	wg.Add(3)
 
 	go func() {
-		defer wg.Done()
 		for event := range user1Events {
 			user1ReceivedEvents = append(user1ReceivedEvents, event)
 			if event.Type == EventTypeMessage {
-				return
+				go func() {
+					time.Sleep(20 * time.Millisecond)
+					wg.Done()
+				}()
 			}
 		}
 	}()
@@ -59,7 +70,7 @@ func TestChatRoom(t *testing.T) {
 		defer wg.Done()
 		for event := range user2Events {
 			user2ReceivedEvents = append(user2ReceivedEvents, event)
-			if event.Type == EventTypeMessage {
+			if event.Type == EventTypeClose {
 				return
 			}
 		}
@@ -69,35 +80,67 @@ func TestChatRoom(t *testing.T) {
 		defer wg.Done()
 		for event := range user3Events {
 			user3ReceivedEvents = append(user3ReceivedEvents, event)
-			if event.Type == EventTypeMessage {
+			if event.Type == EventTypeClose {
 				return
 			}
 		}
 	}()
 
 	chatRoom.Message("send-id", []byte("hello"))
+	chatRoom.Leave("user1")
+	chatRoom.Message("send-id", []byte("user1 left"))
+	chatRoom.Close()
 
 	wg.Wait()
 
 	expectedEvents1 := []Event{
-		{ID: 1, Type: "join", UserID: "user1", Message: nil},
-		{ID: 2, Type: "join", UserID: "user2", Message: nil},
-		{ID: 3, Type: "join", UserID: "user3", Message: nil},
-		{ID: 4, Type: "message", UserID: "send-id", Message: []byte("hello")}}
+		{ID: 1, Type: "join", UserID: "user1"},
+		{ID: 2, Type: "join", UserID: "user2"},
+		{ID: 3, Type: "join", UserID: "user3"},
+		{ID: 4, Type: "message", UserID: "send-id", Message: []byte("hello")},
+	}
 
 	expectedEvents2 := []Event{
-		{ID: 2, Type: "join", UserID: "user2", Message: nil},
-		{ID: 3, Type: "join", UserID: "user3", Message: nil},
-		{ID: 4, Type: "message", UserID: "send-id", Message: []byte("hello")}}
+		{ID: 2, Type: "join", UserID: "user2"},
+		{ID: 3, Type: "join", UserID: "user3"},
+		{ID: 4, Type: "message", UserID: "send-id", Message: []byte("hello")},
+		{ID: 5, Type: "leave", UserID: "user1"},
+		{ID: 6, Type: "message", UserID: "send-id", Message: []byte("user1 left")},
+		{ID: 7, Type: "close"},
+	}
 
 	expectedEvents3 := []Event{
-		{ID: 3, Type: "join", UserID: "user3", Message: nil},
+		{ID: 3, Type: "join", UserID: "user3"},
 		{ID: 4, Type: "message", UserID: "send-id", Message: []byte("hello")},
+		{ID: 5, Type: "leave", UserID: "user1"},
+		{ID: 6, Type: "message", UserID: "send-id", Message: []byte("user1 left")},
+		{ID: 7, Type: "close"},
 	}
 
 	assert.Equal(t, expectedEvents1, removeTime(user1ReceivedEvents), "user1 should have received the correct events")
 	assert.Equal(t, expectedEvents2, removeTime(user2ReceivedEvents), "user2 should have received the correct events")
 	assert.Equal(t, expectedEvents3, removeTime(user3ReceivedEvents), "user3 should have received the correct events")
+
+	// .Message() should be no-op on closed ChatRoom
+	chatRoom.Message("send-id", []byte("hello"))
+
+	assert.Equal(t, 0, len(user1Events), "user1 should have 0 events in events buffer")
+	assert.Equal(t, 0, len(user2Events), "user2 should have 0 events in events buffer")
+	assert.Equal(t, 0, len(user3Events), "user3 should have 0 events in events buffer")
+
+	// Operating on closed chatroom should return ErrClosed.
+	_, _, err = chatRoom.Join("user4", 10)
+	if err != ErrClosed {
+		t.Fatal("should have returned error")
+	}
+	err = chatRoom.Leave("user2")
+	if err != ErrClosed {
+		t.Fatal("should have returned error")
+	}
+	err = chatRoom.Close()
+	if err != ErrClosed {
+		t.Fatal("should have returned error")
+	}
 
 }
 
@@ -201,7 +244,7 @@ func TestChatRoom_updateBuffer(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			chatRoom := NewChatRoom("id", tt.bufferSize)
-			events, _ := chatRoom.Join("userid", tt.eventCount)
+			events, _, _ := chatRoom.Join("userid", tt.eventCount)
 
 			errs := make(chan error, 1)
 

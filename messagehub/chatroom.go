@@ -1,18 +1,27 @@
 package messagehub
 
-import "time"
+import (
+	"time"
+
+	"github.com/pkg/errors"
+)
+
+var (
+	// ErrClosed is returned when an operation is performed on a closed ChatRoom.
+	ErrClosed = errors.Errorf("cannot perform operation on closed chatroom")
+)
 
 const (
 	// EventTypeMessage is the event type for when a message is sent to the chat.
 	EventTypeMessage = "message"
 
-	// EventTypeJoin happens when a client joins the chat
+	// EventTypeJoin happens when a client joins the chat.
 	EventTypeJoin = "join"
 
-	// EventTypeLeave happens when a client leaves the chat
+	// EventTypeLeave happens when a client leaves the chat.
 	EventTypeLeave = "leave"
 
-	// EventTypeClose happens when the chat is closed
+	// EventTypeClose happens when the chat is closed.
 	EventTypeClose = "close"
 )
 
@@ -21,8 +30,8 @@ const (
 type Event struct {
 	ID       int
 	Type     string
-	UserID   string
-	Message  []byte // Message will be non-nil when Type is "message"
+	UserID   string // UserID will be empty for Type "close"
+	Message  []byte // Message will be non-nil for Type "message"
 	UnixTime int64
 }
 
@@ -92,6 +101,7 @@ func NewChatRoom(id string, bufferSize int) *ChatRoom {
 }
 
 // Message sends a message to the ChatRoom asynchronously.
+// Sending on a closed ChatRoom will be a no-op.
 func (c *ChatRoom) Message(senderID string, message []byte) {
 	event := Event{
 		Type:    EventTypeMessage,
@@ -100,7 +110,7 @@ func (c *ChatRoom) Message(senderID string, message []byte) {
 	}
 	req := request{event: event}
 
-	// the chatroom server may already be closed so we
+	// The chatroom server may already be closed so we
 	// must select over the channels to prevent blocking.
 	select {
 	case c.requests <- req:
@@ -111,7 +121,7 @@ func (c *ChatRoom) Message(senderID string, message []byte) {
 // Join adds a new user to the ChatRoom. The event stream to listen on and any
 // recent events are returned.
 // The recent events are ordered from oldest to most recent.
-func (c *ChatRoom) Join(userID string, streamBuffer int) (<-chan Event, []Event) {
+func (c *ChatRoom) Join(userID string, streamBuffer int) (<-chan Event, []Event, error) {
 	eventStream := make(chan Event, streamBuffer)
 	event := Event{
 		Type:   EventTypeJoin,
@@ -132,14 +142,17 @@ func (c *ChatRoom) Join(userID string, streamBuffer int) (<-chan Event, []Event)
 	// the requests buffer and the done signal may never be received.
 	select {
 	case set := <-req.catchUpEvents:
-		return eventStream, sortEventsBuffer(set.events, set.head, set.tail)
+
+		// we sort the buffer here rather than in the serve goroutine
+		// as we want to spend less time blocking the server.
+		return eventStream, sortEventsBuffer(set.events, set.head, set.tail), nil
 	case <-c.closed:
-		return eventStream, nil
+		return nil, nil, ErrClosed
 	}
 }
 
 // Leave removes a user from the ChatRoom.
-func (c *ChatRoom) Leave(userID string) {
+func (c *ChatRoom) Leave(userID string) error {
 	event := Event{
 		Type:   EventTypeLeave,
 		UserID: userID,
@@ -152,69 +165,80 @@ func (c *ChatRoom) Leave(userID string) {
 	case c.requests <- req:
 	case <-c.closed:
 	}
+
 	select {
 	case <-req.done:
+		return nil
 	case <-c.closed:
+		return ErrClosed
 	}
 }
 
 // Close closes the the ChatRoom.
-func (c *ChatRoom) Close() {
-	c.closeSig <- struct{}{}
-	<-c.closed
+func (c *ChatRoom) Close() error {
+	event := Event{
+		Type: EventTypeClose,
+	}
+	req := request{
+		event: event,
+		done:  make(chan struct{}),
+	}
+	select {
+	case c.requests <- req:
+	case <-c.closed:
+	}
+	select {
+	case <-req.done:
+		return nil
+	case <-c.closed:
+		return ErrClosed
+	}
 }
 
 // serve is ran in the background to serve and synchronize requests
 // through the ChatRoom.
 func (c *ChatRoom) serve() {
-	for {
-		select {
-		case req := <-c.requests:
-			c.eventCount++
+	for req := range c.requests {
+		c.eventCount++
 
-			event := req.event
-			event.ID = c.eventCount
-			event.UnixTime = time.Now().Unix()
+		event := req.event
+		event.ID = c.eventCount
+		event.UnixTime = time.Now().Unix()
 
-			c.updateBuffer(event)
+		c.updateBuffer(event)
 
-			// handle request based on event type.
-			switch event.Type {
-			case EventTypeMessage:
-				c.publishEvent(event)
-
-			case EventTypeJoin:
-				eventSet := eventBufferSet{
-					events: make([]Event, c.bufferSize),
-					head:   c.bufferHead,
-					tail:   c.bufferTail,
-				}
-				copy(eventSet.events, c.buffer)
-
-				if _, ok := c.clients[event.UserID]; !ok {
-					c.clients[event.UserID] = req.eventStream
-					req.catchUpEvents <- eventSet
-					c.publishEvent(event)
-					continue
-				}
+		// handle request based on event type.
+		switch event.Type {
+		case EventTypeMessage:
+			c.publishEvent(event)
+		case EventTypeJoin:
+			eventSet := eventBufferSet{
+				events: make([]Event, c.bufferSize),
+				head:   c.bufferHead,
+				tail:   c.bufferTail,
+			}
+			copy(eventSet.events, c.buffer)
+			if _, ok := c.clients[event.UserID]; !ok {
 				c.clients[event.UserID] = req.eventStream
 				req.catchUpEvents <- eventSet
-
-			case EventTypeLeave:
-				if _, ok := c.clients[event.UserID]; ok {
-					delete(c.clients, event.UserID)
-					close(req.done)
-					c.publishEvent(event)
-					continue
-				}
+				c.publishEvent(event)
+				continue
+			}
+			c.clients[event.UserID] = req.eventStream
+			req.catchUpEvents <- eventSet
+		case EventTypeLeave:
+			if _, ok := c.clients[event.UserID]; ok {
+				delete(c.clients, event.UserID)
 				close(req.done)
+				c.publishEvent(event)
+				continue
 			}
-
-		case <-c.closeSig:
-			event := Event{
-				Type: EventTypeClose,
-			}
+			close(req.done)
+		case EventTypeClose:
 			c.publishEvent(event)
+			for userid := range c.clients {
+				delete(c.clients, userid)
+			}
 			close(c.closed)
 			return
 		}
