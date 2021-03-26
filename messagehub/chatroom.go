@@ -35,19 +35,12 @@ type Event struct {
 	UnixTime int64
 }
 
-type eventBufferSet struct {
-	events  []Event
-	head    int
-	tail    int
-	isEmpty bool
-}
-
 // Request are created and sent through the ChatRoom, they can be
 // intercepted with middleware.
 type Request struct {
 	Event         Event
 	eventStream   chan<- Event
-	catchUpEvents chan eventBufferSet
+	catchUpEvents chan *eventsRingBuffer
 	done          chan struct{}
 }
 
@@ -66,12 +59,7 @@ type ChatRoom struct {
 	eventCount int
 
 	// buffer holds the last n (bufferSize) events in memory
-	// the buffer is updated in a circular fashion for performance
-	// so the head and tail of the buffer must be tracked.
-	buffer     []Event
-	bufferSize int
-	bufferHead int
-	bufferTail int
+	buffer *eventsRingBuffer
 
 	closed   chan struct{}
 	closeSig chan struct{}
@@ -98,11 +86,10 @@ func NewChatRoom(id string, bufferSize int, mids ...MiddleWare) *ChatRoom {
 
 	chatRoom := &ChatRoom{
 		clients:  make(map[string]chan<- Event),
-		requests: make(chan Request, 1024),
+		requests: make(chan Request, bufferSize),
 		mids:     mids,
 
-		buffer:     make([]Event, bufferSize),
-		bufferSize: bufferSize,
+		buffer: newEventsRingBuffer(bufferSize),
 
 		closed: make(chan struct{}),
 	}
@@ -140,7 +127,7 @@ func (c *ChatRoom) Join(userID string, streamBuffer int) (<-chan Event, []Event,
 	req := Request{
 		Event:         event,
 		eventStream:   eventStream,
-		catchUpEvents: make(chan eventBufferSet, 1),
+		catchUpEvents: make(chan *eventsRingBuffer, 1),
 	}
 
 	select {
@@ -151,11 +138,11 @@ func (c *ChatRoom) Join(userID string, streamBuffer int) (<-chan Event, []Event,
 	// the chatroom server may be closed while the request is in
 	// the requests buffer and the done signal may never be received.
 	select {
-	case set := <-req.catchUpEvents:
+	case eventsBuf := <-req.catchUpEvents:
 
 		// we sort the buffer here rather than in the serve goroutine
 		// as we want to spend less time blocking the server.
-		return eventStream, sortEventsBuffer(set.events, set.head, set.tail), nil
+		return eventStream, eventsBuf.events(), nil
 	case <-c.closed:
 		return nil, nil, ErrClosed
 	}
@@ -218,27 +205,21 @@ func (c *ChatRoom) serve() {
 	for req := range requestStream {
 		event := req.Event
 
-		c.updateBuffer(event)
+		c.buffer.push(event)
 
 		// handle request based on event type.
 		switch event.Type {
 		case EventTypeMessage:
 			c.publishEvent(event)
 		case EventTypeJoin:
-			eventSet := eventBufferSet{
-				events: make([]Event, c.bufferSize),
-				head:   c.bufferHead,
-				tail:   c.bufferTail,
-			}
-			copy(eventSet.events, c.buffer)
 			if _, ok := c.clients[event.UserID]; !ok {
 				c.clients[event.UserID] = req.eventStream
-				req.catchUpEvents <- eventSet
+				req.catchUpEvents <- c.buffer.makeCopy()
 				c.publishEvent(event)
 				continue
 			}
 			c.clients[event.UserID] = req.eventStream
-			req.catchUpEvents <- eventSet
+			req.catchUpEvents <- c.buffer.makeCopy()
 		case EventTypeLeave:
 			if _, ok := c.clients[event.UserID]; ok {
 				delete(c.clients, event.UserID)
@@ -303,46 +284,4 @@ func wrapMiddleware(requests <-chan Request, middleware ...MiddleWare) <-chan Re
 		}
 	}
 	return requests
-}
-
-// updateBuffer updates the buffer in a circular fashion.
-func (c *ChatRoom) updateBuffer(event Event) {
-	if c.eventCount > 1 {
-		c.bufferHead++
-		if c.bufferHead == c.bufferSize {
-			c.bufferHead = 0
-		}
-		if c.eventCount > c.bufferSize {
-			c.bufferTail++
-		}
-		if c.bufferTail == c.bufferSize {
-			c.bufferTail = 0
-		}
-	}
-	c.buffer[c.bufferHead] = event
-}
-
-// sortEventsBuffer takes a circular events buffer with knowledge of where
-// the head and tail is and reorders the events from oldest to newest.
-// Any empty elements are removed.
-func sortEventsBuffer(events []Event, head, tail int) []Event {
-	if len(events) == 0 {
-		return events
-	}
-
-	i := 0
-	size := len(events)
-	sorted := make([]Event, size)
-	for {
-		sorted[i] = events[tail]
-		if tail == head {
-			break
-		}
-		i++
-		tail++
-		if tail == size {
-			tail = 0
-		}
-	}
-	return sorted[:i+1]
 }
