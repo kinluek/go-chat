@@ -28,11 +28,12 @@ const (
 // Event is what clients in the messagehub receive when an event happens.
 // This could either be a message, someone joining or leaving the chat room.
 type Event struct {
-	ID       int    `json:"id"`
-	Type     string `json:"type"`
-	UserID   string `json:"userId,omitempty"`  // UserID will be empty for Type "close"
-	Message  []byte `json:"message,omitempty"` // Message will be non-nil for Type "message"
-	UnixTime int64  `json:"unixTime"`
+	ID         int    `json:"id"`
+	ChatRoomID string `json:"chatroomId"`
+	Type       string `json:"type"`
+	UserID     string `json:"userId,omitempty"`  // UserID will be empty for Type "close"
+	Message    []byte `json:"message,omitempty"` // Message will be non-nil for Type "message"
+	UnixTime   int64  `json:"unixTime"`
 }
 
 // Request are created and sent through the MessageHub, they can be
@@ -58,8 +59,8 @@ type MessageHub struct {
 	mids       []MiddleWare
 	eventCount int
 
-	// buffer holds the last n (bufferSize) events in memory
-	buffer *eventsRingBuffer
+	// history holds the last n (bufferSize) events in memory
+	history *eventsRingBuffer
 
 	closed chan struct{}
 }
@@ -84,11 +85,12 @@ func New(id string, bufferSize int, mids ...MiddleWare) *MessageHub {
 	}
 
 	hub := &MessageHub{
+		id:       id,
 		clients:  make(map[string]chan<- Event),
 		requests: make(chan Request, bufferSize),
 		mids:     mids,
 
-		buffer: newEventsRingBuffer(bufferSize),
+		history: newEventsRingBuffer(bufferSize),
 
 		closed: make(chan struct{}),
 	}
@@ -100,9 +102,10 @@ func New(id string, bufferSize int, mids ...MiddleWare) *MessageHub {
 // Sending on a closed MessageHub will be a no-op.
 func (c *MessageHub) Message(senderID string, message []byte) {
 	event := Event{
-		Type:    EventTypeMessage,
-		UserID:  senderID,
-		Message: message,
+		Type:       EventTypeMessage,
+		ChatRoomID: c.id,
+		UserID:     senderID,
+		Message:    message,
 	}
 	req := Request{Event: event}
 
@@ -114,19 +117,25 @@ func (c *MessageHub) Message(senderID string, message []byte) {
 	}
 }
 
+// History gets the available in history of events in chronological order.
+func (c *MessageHub) History() []Event {
+	return c.history.events()
+}
+
 // Join adds a new user to the MessageHub. The event stream to listen on and any
 // recent events are returned.
 // The recent events are ordered from oldest to most recent.
-func (c *MessageHub) Join(userID string, streamBuffer int) (<-chan Event, []Event, error) {
+func (c *MessageHub) Join(userID string, streamBuffer int) (<-chan Event, error) {
 	eventStream := make(chan Event, streamBuffer)
 	event := Event{
-		Type:   EventTypeJoin,
-		UserID: userID,
+		Type:       EventTypeJoin,
+		ChatRoomID: c.id,
+		UserID:     userID,
 	}
 	req := Request{
-		Event:         event,
-		eventStream:   eventStream,
-		catchUpEvents: make(chan *eventsRingBuffer, 1),
+		Event:       event,
+		eventStream: eventStream,
+		done:        make(chan struct{}),
 	}
 
 	select {
@@ -137,21 +146,19 @@ func (c *MessageHub) Join(userID string, streamBuffer int) (<-chan Event, []Even
 	// the messagehub server may be closed while the request is in
 	// the requests buffer and the done signal may never be received.
 	select {
-	case eventsBuf := <-req.catchUpEvents:
-
-		// we sort the buffer here rather than in the serve goroutine
-		// as we want to spend less time blocking the server.
-		return eventStream, eventsBuf.events(), nil
+	case <-req.done:
+		return eventStream, nil
 	case <-c.closed:
-		return nil, nil, ErrClosed
+		return nil, ErrClosed
 	}
 }
 
 // Leave removes a user from the MessageHub.
 func (c *MessageHub) Leave(userID string) error {
 	event := Event{
-		Type:   EventTypeLeave,
-		UserID: userID,
+		Type:       EventTypeLeave,
+		ChatRoomID: c.id,
+		UserID:     userID,
 	}
 	req := Request{
 		Event: event,
@@ -173,7 +180,8 @@ func (c *MessageHub) Leave(userID string) error {
 // Close closes the the MessageHub.
 func (c *MessageHub) Close() error {
 	event := Event{
-		Type: EventTypeClose,
+		Type:       EventTypeClose,
+		ChatRoomID: c.id,
 	}
 	req := Request{
 		Event: event,
@@ -204,7 +212,7 @@ func (c *MessageHub) serve() {
 	for req := range requestStream {
 		event := req.Event
 
-		c.buffer.push(event)
+		c.history.push(event)
 
 		// handle request based on event type.
 		switch event.Type {
@@ -213,12 +221,12 @@ func (c *MessageHub) serve() {
 		case EventTypeJoin:
 			if _, ok := c.clients[event.UserID]; !ok {
 				c.clients[event.UserID] = req.eventStream
-				req.catchUpEvents <- c.buffer.makeCopy()
+				close(req.done)
 				c.broadcast(event)
 				continue
 			}
 			c.clients[event.UserID] = req.eventStream
-			req.catchUpEvents <- c.buffer.makeCopy()
+			close(req.done)
 		case EventTypeLeave:
 			if stream, ok := c.clients[event.UserID]; ok {
 				delete(c.clients, event.UserID)

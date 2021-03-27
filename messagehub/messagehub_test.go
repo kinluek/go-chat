@@ -12,35 +12,18 @@ import (
 func TestMessageHub(t *testing.T) {
 	hub := New("hub-id", 10)
 
-	user1Events, pastEvents1, err := hub.Join("user1", 10)
+	user1Events, err := hub.Join("user1", 10)
 	if err != nil {
 		t.Fatal(err)
 	}
-	user2Events, pastEvents2, err := hub.Join("user2", 10)
+	user2Events, err := hub.Join("user2", 10)
 	if err != nil {
 		t.Fatal(err)
 	}
-	user3Events, pastEvents3, err := hub.Join("user3", 10)
+	user3Events, err := hub.Join("user3", 10)
 	if err != nil {
 		t.Fatal(err)
 	}
-
-	expectedPastEvents1 := []Event{
-		{ID: 1, Type: "join", UserID: "user1"},
-	}
-	expectedPastEvents2 := []Event{
-		{ID: 1, Type: "join", UserID: "user1"},
-		{ID: 2, Type: "join", UserID: "user2"},
-	}
-	expectedPastEvents3 := []Event{
-		{ID: 1, Type: "join", UserID: "user1"},
-		{ID: 2, Type: "join", UserID: "user2"},
-		{ID: 3, Type: "join", UserID: "user3"},
-	}
-
-	assert.Equal(t, expectedPastEvents1, removeTime(pastEvents1), "user1 should get the correct past events when joining")
-	assert.Equal(t, expectedPastEvents2, removeTime(pastEvents2), "user2 should get the correct past events when joining")
-	assert.Equal(t, expectedPastEvents3, removeTime(pastEvents3), "user3 should get the correct past events when joining")
 
 	user1ReceivedEvents := make([]Event, 0)
 	user2ReceivedEvents := make([]Event, 0)
@@ -89,32 +72,43 @@ func TestMessageHub(t *testing.T) {
 	wg.Wait()
 
 	expectedEvents1 := []Event{
-		{ID: 1, Type: "join", UserID: "user1"},
-		{ID: 2, Type: "join", UserID: "user2"},
-		{ID: 3, Type: "join", UserID: "user3"},
-		{ID: 4, Type: "message", UserID: "send-id", Message: []byte("hello")},
+		{ID: 1, Type: "join", ChatRoomID: "hub-id", UserID: "user1"},
+		{ID: 2, Type: "join", ChatRoomID: "hub-id", UserID: "user2"},
+		{ID: 3, Type: "join", ChatRoomID: "hub-id", UserID: "user3"},
+		{ID: 4, Type: "message", ChatRoomID: "hub-id", UserID: "send-id", Message: []byte("hello")},
 	}
 
 	expectedEvents2 := []Event{
-		{ID: 2, Type: "join", UserID: "user2"},
-		{ID: 3, Type: "join", UserID: "user3"},
-		{ID: 4, Type: "message", UserID: "send-id", Message: []byte("hello")},
-		{ID: 5, Type: "leave", UserID: "user1"},
-		{ID: 6, Type: "message", UserID: "send-id", Message: []byte("user1 left")},
-		{ID: 7, Type: "close"},
+		{ID: 2, Type: "join", ChatRoomID: "hub-id", UserID: "user2"},
+		{ID: 3, Type: "join", ChatRoomID: "hub-id", UserID: "user3"},
+		{ID: 4, Type: "message", ChatRoomID: "hub-id", UserID: "send-id", Message: []byte("hello")},
+		{ID: 5, Type: "leave", ChatRoomID: "hub-id", UserID: "user1"},
+		{ID: 6, Type: "message", ChatRoomID: "hub-id", UserID: "send-id", Message: []byte("user1 left")},
+		{ID: 7, Type: "close", ChatRoomID: "hub-id"},
 	}
 
 	expectedEvents3 := []Event{
-		{ID: 3, Type: "join", UserID: "user3"},
-		{ID: 4, Type: "message", UserID: "send-id", Message: []byte("hello")},
-		{ID: 5, Type: "leave", UserID: "user1"},
-		{ID: 6, Type: "message", UserID: "send-id", Message: []byte("user1 left")},
-		{ID: 7, Type: "close"},
+		{ID: 3, Type: "join", ChatRoomID: "hub-id", UserID: "user3"},
+		{ID: 4, Type: "message", ChatRoomID: "hub-id", UserID: "send-id", Message: []byte("hello")},
+		{ID: 5, Type: "leave", ChatRoomID: "hub-id", UserID: "user1"},
+		{ID: 6, Type: "message", ChatRoomID: "hub-id", UserID: "send-id", Message: []byte("user1 left")},
+		{ID: 7, Type: "close", ChatRoomID: "hub-id"},
+	}
+
+	expectedHistory := []Event{
+		{ID: 1, Type: "join", ChatRoomID: "hub-id", UserID: "user1"},
+		{ID: 2, Type: "join", ChatRoomID: "hub-id", UserID: "user2"},
+		{ID: 3, Type: "join", ChatRoomID: "hub-id", UserID: "user3"},
+		{ID: 4, Type: "message", ChatRoomID: "hub-id", UserID: "send-id", Message: []byte("hello")},
+		{ID: 5, Type: "leave", ChatRoomID: "hub-id", UserID: "user1"},
+		{ID: 6, Type: "message", ChatRoomID: "hub-id", UserID: "send-id", Message: []byte("user1 left")},
+		{ID: 7, Type: "close", ChatRoomID: "hub-id"},
 	}
 
 	assert.Equal(t, expectedEvents1, removeTime(user1ReceivedEvents), "user1 should have received the correct events")
 	assert.Equal(t, expectedEvents2, removeTime(user2ReceivedEvents), "user2 should have received the correct events")
 	assert.Equal(t, expectedEvents3, removeTime(user3ReceivedEvents), "user3 should have received the correct events")
+	assert.Equal(t, expectedHistory, removeTime(hub.History()), "history should contain all the events")
 
 	// .Message() should be no-op on closed MessageHUb
 	hub.Message("send-id", []byte("hello"))
@@ -124,7 +118,7 @@ func TestMessageHub(t *testing.T) {
 	assert.Equal(t, 0, len(user3Events), "user3 should have 0 events in events buffer")
 
 	// Operating on closed hub should return ErrClosed.
-	_, _, err = hub.Join("user4", 10)
+	_, err = hub.Join("user4", 10)
 	if err != ErrClosed {
 		t.Fatal("should have returned error")
 	}
@@ -161,7 +155,7 @@ func TestMessageHub_Middleware(t *testing.T) {
 
 	hub := New("hub-id", 10, storageMiddleware)
 
-	userEvents, _, err := hub.Join("user1", 10)
+	userEvents, err := hub.Join("user1", 10)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -1,5 +1,7 @@
 package messagehub
 
+import "sync"
+
 // eventsRingBuffer holds the last n (size) events in memory
 // the buffer is updated in a circular fashion for performance.
 // (Instead of popping and pushing to a slice, which would require
@@ -12,6 +14,8 @@ type eventsRingBuffer struct {
 
 	notEmpty bool
 	wrapped  bool
+
+	mtx sync.Mutex
 }
 
 func newEventsRingBuffer(size int) *eventsRingBuffer {
@@ -22,6 +26,8 @@ func newEventsRingBuffer(size int) *eventsRingBuffer {
 }
 
 func (b *eventsRingBuffer) push(event Event) {
+	b.mtx.Lock()
+	defer b.mtx.Unlock()
 	if b.notEmpty {
 		b.head++
 		if b.head == b.size {
@@ -42,21 +48,9 @@ func (b *eventsRingBuffer) push(event Event) {
 	}
 }
 
-func (b *eventsRingBuffer) makeCopy() *eventsRingBuffer {
-	copiedBuf := make([]Event, b.size)
-	copy(copiedBuf, b.buffer)
-
-	return &eventsRingBuffer{
-		buffer:   copiedBuf,
-		size:     b.size,
-		head:     b.head,
-		tail:     b.tail,
-		notEmpty: b.notEmpty,
-		wrapped:  b.wrapped,
-	}
-}
-
 func (b *eventsRingBuffer) events() []Event {
+	b.mtx.Lock()
+	defer b.mtx.Unlock()
 	if !b.notEmpty || len(b.buffer) == 0 {
 		return nil
 	}
