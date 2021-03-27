@@ -28,11 +28,11 @@ const (
 // Event is what clients in the messagehub receive when an event happens.
 // This could either be a message, someone joining or leaving the chat room.
 type Event struct {
-	ID       int
-	Type     string
-	UserID   string // UserID will be empty for Type "close"
-	Message  []byte // Message will be non-nil for Type "message"
-	UnixTime int64
+	ID       int    `json:"id"`
+	Type     string `json:"type"`
+	UserID   string `json:"userId,omitempty"`  // UserID will be empty for Type "close"
+	Message  []byte `json:"message,omitempty"` // Message will be non-nil for Type "message"
+	UnixTime int64  `json:"unixTime"`
 }
 
 // Request are created and sent through the MessageHub, they can be
