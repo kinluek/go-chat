@@ -32,7 +32,7 @@ type Event struct {
 	ChatRoomID string `json:"chatroomId"`
 	Type       string `json:"type"`
 	UserID     string `json:"userId,omitempty"`  // UserID will be empty for Type "close"
-	Message    []byte `json:"message,omitempty"` // Message will be non-nil for Type "message"
+	Message    string `json:"message,omitempty"` // Message will be non-nil for Type "message"
 	UnixTime   int64  `json:"unixTime"`
 }
 
@@ -100,7 +100,7 @@ func New(id string, bufferSize int, mids ...MiddleWare) *MessageHub {
 
 // Message sends a message to the MessageHub asynchronously.
 // Sending on a closed MessageHub will be a no-op.
-func (c *MessageHub) Message(senderID string, message []byte) {
+func (c *MessageHub) Message(senderID string, message string) {
 	event := Event{
 		Type:       EventTypeMessage,
 		ChatRoomID: c.id,

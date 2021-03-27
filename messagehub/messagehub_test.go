@@ -64,9 +64,9 @@ func TestMessageHub(t *testing.T) {
 		}
 	}()
 
-	hub.Message("send-id", []byte("hello"))
+	hub.Message("send-id", "hello")
 	hub.Leave("user1")
-	hub.Message("send-id", []byte("user1 left"))
+	hub.Message("send-id", "user1 left")
 	hub.Close()
 
 	wg.Wait()
@@ -75,23 +75,23 @@ func TestMessageHub(t *testing.T) {
 		{ID: 1, Type: "join", ChatRoomID: "hub-id", UserID: "user1"},
 		{ID: 2, Type: "join", ChatRoomID: "hub-id", UserID: "user2"},
 		{ID: 3, Type: "join", ChatRoomID: "hub-id", UserID: "user3"},
-		{ID: 4, Type: "message", ChatRoomID: "hub-id", UserID: "send-id", Message: []byte("hello")},
+		{ID: 4, Type: "message", ChatRoomID: "hub-id", UserID: "send-id", Message: "hello"},
 	}
 
 	expectedEvents2 := []Event{
 		{ID: 2, Type: "join", ChatRoomID: "hub-id", UserID: "user2"},
 		{ID: 3, Type: "join", ChatRoomID: "hub-id", UserID: "user3"},
-		{ID: 4, Type: "message", ChatRoomID: "hub-id", UserID: "send-id", Message: []byte("hello")},
+		{ID: 4, Type: "message", ChatRoomID: "hub-id", UserID: "send-id", Message: "hello"},
 		{ID: 5, Type: "leave", ChatRoomID: "hub-id", UserID: "user1"},
-		{ID: 6, Type: "message", ChatRoomID: "hub-id", UserID: "send-id", Message: []byte("user1 left")},
+		{ID: 6, Type: "message", ChatRoomID: "hub-id", UserID: "send-id", Message: "user1 left"},
 		{ID: 7, Type: "close", ChatRoomID: "hub-id"},
 	}
 
 	expectedEvents3 := []Event{
 		{ID: 3, Type: "join", ChatRoomID: "hub-id", UserID: "user3"},
-		{ID: 4, Type: "message", ChatRoomID: "hub-id", UserID: "send-id", Message: []byte("hello")},
+		{ID: 4, Type: "message", ChatRoomID: "hub-id", UserID: "send-id", Message: "hello"},
 		{ID: 5, Type: "leave", ChatRoomID: "hub-id", UserID: "user1"},
-		{ID: 6, Type: "message", ChatRoomID: "hub-id", UserID: "send-id", Message: []byte("user1 left")},
+		{ID: 6, Type: "message", ChatRoomID: "hub-id", UserID: "send-id", Message: "user1 left"},
 		{ID: 7, Type: "close", ChatRoomID: "hub-id"},
 	}
 
@@ -99,9 +99,9 @@ func TestMessageHub(t *testing.T) {
 		{ID: 1, Type: "join", ChatRoomID: "hub-id", UserID: "user1"},
 		{ID: 2, Type: "join", ChatRoomID: "hub-id", UserID: "user2"},
 		{ID: 3, Type: "join", ChatRoomID: "hub-id", UserID: "user3"},
-		{ID: 4, Type: "message", ChatRoomID: "hub-id", UserID: "send-id", Message: []byte("hello")},
+		{ID: 4, Type: "message", ChatRoomID: "hub-id", UserID: "send-id", Message: "hello"},
 		{ID: 5, Type: "leave", ChatRoomID: "hub-id", UserID: "user1"},
-		{ID: 6, Type: "message", ChatRoomID: "hub-id", UserID: "send-id", Message: []byte("user1 left")},
+		{ID: 6, Type: "message", ChatRoomID: "hub-id", UserID: "send-id", Message: "user1 left"},
 		{ID: 7, Type: "close", ChatRoomID: "hub-id"},
 	}
 
@@ -111,7 +111,7 @@ func TestMessageHub(t *testing.T) {
 	assert.Equal(t, expectedHistory, removeTime(hub.History()), "history should contain all the events")
 
 	// .Message() should be no-op on closed MessageHUb
-	hub.Message("send-id", []byte("hello"))
+	hub.Message("send-id", "hello")
 
 	assert.Equal(t, 0, len(user1Events), "user1 should have 0 events in events buffer")
 	assert.Equal(t, 0, len(user2Events), "user2 should have 0 events in events buffer")
@@ -173,9 +173,9 @@ func TestMessageHub_Middleware(t *testing.T) {
 		}
 	}()
 
-	hub.Message("send-id", []byte("message1"))
-	hub.Message("send-id", []byte("message2"))
-	hub.Message("send-id", []byte("message3"))
+	hub.Message("send-id", "message1")
+	hub.Message("send-id", "message2")
+	hub.Message("send-id", "message3")
 	hub.Close()
 
 	wg.Wait()
