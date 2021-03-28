@@ -268,6 +268,7 @@ func (c *MessageHub) broadcast(event Event) {
 func (c *MessageHub) generator(in <-chan Request) <-chan Request {
 	out := make(chan Request)
 	go func() {
+		defer close(out)
 		for {
 			select {
 			case req := <-in:
@@ -276,7 +277,6 @@ func (c *MessageHub) generator(in <-chan Request) <-chan Request {
 				req.Event.UnixTime = time.Now().Unix()
 				out <- req
 			case <-c.closed:
-				close(out)
 				return
 			}
 		}

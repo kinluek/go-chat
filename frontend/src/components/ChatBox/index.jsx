@@ -68,12 +68,15 @@ const useStyles = makeStyles((theme) => ({
 
 const serverHost = process.env.REACT_APP_WEBSOCKET_ENDPOINT || "localhost:8080";
 
-const ChatBox = ({ username }) => {
-  const classes = useStyles();
-  const [events, setEvents] = useState([]);
-  const [message, setMessage] = useState("");
-  let socketRef = useRef();
+const useScrollOnNewEvent = (events) => {
+  useEffect(() => {
+    document
+      .getElementById("scroll-to-bottom")
+      .scrollIntoView({ behavior: "smooth" });
+  }, [events]);
+};
 
+const useWebSocket = (socketRef, username, setEvents) => {
   useEffect(() => {
     const socket = new WebSocket(
       `ws://${serverHost}/chat?username=${username}`
@@ -88,7 +91,7 @@ const ChatBox = ({ username }) => {
     });
     socketRef.current = socket;
 
-    fetch(`http://${serverHost}/events`)
+    fetch(`http://${serverHost}/history`)
       .then((resp) => resp.json())
       .then((data) => {
         setEvents((events) => sortAndFilterEvents([...events, ...data.events]));
@@ -96,7 +99,17 @@ const ChatBox = ({ username }) => {
       .catch((err) => console.log(err));
 
     return () => socket.close(1001);
-  }, [username]);
+  }, [socketRef, username, setEvents]);
+};
+
+const ChatBox = ({ username }) => {
+  const classes = useStyles();
+  const [events, setEvents] = useState([]);
+  const [message, setMessage] = useState("");
+  let socketRef = useRef();
+
+  useScrollOnNewEvent(events);
+  useWebSocket(socketRef, username, setEvents);
 
   const handleSubmit = () => {
     if (message === "") return;
@@ -111,13 +124,14 @@ const ChatBox = ({ username }) => {
       </Typography>
       <Grid container spacing={3}>
         <Grid item xs={12}>
-          <Paper className={classes.messageList}>
+          <Paper id="message-list" className={classes.messageList}>
             <List>
               {events.map((event) => (
                 <Container key={event.id} className={classes.messageContainer}>
                   {outputMessage(username, event)}
                 </Container>
               ))}
+              <div id="scroll-to-bottom" />
             </List>
           </Paper>
         </Grid>
