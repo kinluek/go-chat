@@ -6,8 +6,11 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"os/signal"
 	"strconv"
 	"strings"
+	"sync"
+	"syscall"
 	"time"
 
 	"github.com/gorilla/websocket"
@@ -105,7 +108,10 @@ func getEventsHistory(hub *messagehub.MessageHub) http.HandlerFunc {
 		}
 		w.Header().Set("Access-Control-Allow-Origin", "*")
 		w.Header().Set("Content-Type", "application/json")
-		w.Write(resp)
+		_, err = w.Write(resp)
+		if err != nil {
+			log.Printf("[ERROR]: failed to write history response - %v", err)
+		}
 	}
 }
 
@@ -136,15 +142,31 @@ func main() {
 	}
 	defer logFile.Close()
 
-	hub := messagehub.New("GoChat", eventBufferSize, datalog.Store(logFile, flushSecs))
+	wg := sync.WaitGroup{}
+	hub := messagehub.New("GoChat", eventBufferSize, datalog.Store(logFile, flushSecs, &wg))
 	upgrader := newUpgrader(socketBufferSize)
 
 	http.HandleFunc("/chat", handleConnection(hub, upgrader))
 	http.HandleFunc("/history", getEventsHistory(hub))
 
-	log.Printf("starting server on port %v", port)
-	err = http.ListenAndServe(":"+strconv.Itoa(port), nil)
-	if err != nil {
-		log.Fatal(err)
-	}
+	go func() {
+		log.Printf("starting server on port %v", port)
+		err = http.ListenAndServe(":"+strconv.Itoa(port), nil)
+		if err != nil {
+			log.Fatal(err)
+		}
+	}()
+
+	// listen to shutdown signal so we can do a simple cleanup before exiting.
+	shutdown := make(chan os.Signal, 1)
+	signal.Notify(shutdown, os.Interrupt, syscall.SIGTERM)
+	<-shutdown
+
+	log.Println("shutting down...")
+
+	hub.Close()
+	wg.Wait()
+
+	log.Println("shutdown complete")
+
 }

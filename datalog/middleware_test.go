@@ -24,18 +24,15 @@ func TestStore(t *testing.T) {
 	// create input stream
 	input := make(chan messagehub.Request)
 
-	// wrap input stream with store middleware
-	out := Store(logFile, time.Millisecond)(input)
-
 	wg := sync.WaitGroup{}
-	wg.Add(1)
+
+	// wrap input stream with store middleware
+	out := Store(logFile, time.Millisecond, &wg)(input)
 
 	// drain output stream so requests are pulled through
 	go func() {
-		// out should be closed after input is closed and writer is flushed.
 		for range out {
 		}
-		wg.Done()
 	}()
 
 	inputs := []messagehub.Request{

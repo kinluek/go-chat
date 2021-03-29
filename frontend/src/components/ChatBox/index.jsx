@@ -203,6 +203,16 @@ const LeaveMessage = ({ event }) => {
   );
 };
 
+const CloseMessage = ({ event }) => {
+  const classes = useStyles();
+
+  return (
+    <Paper className={classes.leaveEvent}>
+      <li>the chat has ended</li>
+    </Paper>
+  );
+};
+
 const TextMessage = ({ event, username }) => {
   const classes = useStyles();
 
@@ -237,6 +247,9 @@ const outputMessage = (username, event) => {
       break;
     case "leave":
       MessageComponent = LeaveMessage;
+      break;
+    case "close":
+      MessageComponent = CloseMessage;
       break;
     default:
       MessageComponent = TextMessage;

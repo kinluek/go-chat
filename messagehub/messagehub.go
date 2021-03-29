@@ -238,8 +238,9 @@ func (c *MessageHub) serve() {
 			close(req.done)
 		case EventTypeClose:
 			c.broadcast(event)
-			for userid := range c.clients {
+			for userid, stream := range c.clients {
 				delete(c.clients, userid)
+				close(stream)
 			}
 			close(c.closed)
 			return
