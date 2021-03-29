@@ -41,7 +41,7 @@ type Event struct {
 type Request struct {
 	Event         Event
 	eventStream   chan<- Event
-	catchUpEvents chan *eventsRingBuffer
+	catchUpEvents chan *eventHistoryBuffer
 	done          chan struct{}
 }
 
@@ -55,36 +55,22 @@ type MessageHub struct {
 	eventCount int
 
 	// history holds the last n (bufferSize) events in memory
-	history *eventsRingBuffer
+	history *eventHistoryBuffer
 
 	closed chan struct{}
 }
 
 // New creates a new MessageHub that is ready to accept requests.
-// The MessageHub must be given an id and a bufferSize, the bufferSize defines
-// how many events the MessageHub can hold in memory, these in memory events
-// can let new clients joining the MessageHub efficiently catchup with recent messages.
-//
-// Max bufferSize is 1024.
-// Min bufferSize is 1.
-func New(id string, bufferSize int) *MessageHub {
-
-	// having a minimum buffer size of one means
-	// we don't have to add extra logic to handle empty
-	// buffers
-	if bufferSize < 1 {
-		bufferSize = 1
-	}
-	if bufferSize > 1024 {
-		bufferSize = 1024
-	}
-
+// The MessageHub must be given an id, reqBufferSize and a historySize.
+// The reqBufferSize determins the size of the requests channel buffer.
+// The historySize defines how many events the MessageHub can hold in memory for quick access.
+func New(id string, reqBufferSize, historySize int) *MessageHub {
 	hub := &MessageHub{
 		id:       id,
 		clients:  make(map[string]chan<- Event),
-		requests: make(chan Request, bufferSize),
+		requests: make(chan Request, reqBufferSize),
 
-		history: newEventsRingBuffer(bufferSize),
+		history: newEventsHistoryBuffer(historySize),
 
 		closed: make(chan struct{}),
 	}
@@ -207,6 +193,7 @@ func (c *MessageHub) serve() {
 	for req := range c.requests {
 		c.eventCount++
 
+		// add serial key and timestamp to event.
 		event := req.Event
 		event.ID = c.eventCount
 		event.UnixTime = time.Now().Unix()

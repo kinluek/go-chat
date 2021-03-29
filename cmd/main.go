@@ -118,7 +118,8 @@ func getEventsHistory(hub *messagehub.MessageHub) http.HandlerFunc {
 var (
 	port              int
 	socketBufferSize  int
-	eventBufferSize   int
+	hubBufferSize     int
+	eventCacheSize    int
 	datalogBufferSize int
 	eventLog          string
 	flushInterval     int
@@ -127,15 +128,16 @@ var (
 func main() {
 	flag.IntVar(&port, "port", 8080, "port for server to listen on")
 	flag.IntVar(&socketBufferSize, "socket-buffer-size", 1024, "sets the size of the read and write socket buffers")
-	flag.IntVar(&eventBufferSize, "event-buffer-size", 1024, "size of in memory events buffer which holds most recent events")
+	flag.IntVar(&hubBufferSize, "hub-buffer-size", 1024, "how many messages the message hub can queue up asynchronously")
+	flag.IntVar(&eventCacheSize, "event-cache-size", 1024, "how many events the message hub will cache in memory")
 	flag.IntVar(&datalogBufferSize, "datalog-buffer-size", 1024, "size of the datalog channel buffer")
 	flag.StringVar(&eventLog, "event-log-path", "./events.log", "the file path to log events for persistence")
 	flag.IntVar(&flushInterval, "flush-interval-secs", 5, "how often to flush events to log file in seconds")
 	flag.Parse()
 	flushSecs := time.Duration(flushInterval) * time.Second
 
-	log.Printf("config - port=%v socket-buffer-size=%v event-buffer-size=%v event-log-path=%q flush-interval-secs=%v",
-		port, socketBufferSize, eventBufferSize, eventLog, flushInterval,
+	log.Printf("config - port=%v socket-buffer-size=%v hub-buffer-size=%v event-cache-size=%v event-log-path=%q flush-interval-secs=%v",
+		port, socketBufferSize, hubBufferSize, eventCacheSize, eventLog, flushInterval,
 	)
 
 	logFile, err := os.OpenFile(eventLog, os.O_APPEND|os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0644)
@@ -145,7 +147,7 @@ func main() {
 	defer logFile.Close()
 
 	wg := sync.WaitGroup{}
-	hub := messagehub.New("GoChat", eventBufferSize)
+	hub := messagehub.New("GoChat", hubBufferSize, eventCacheSize)
 	hub.AttachListener(datalog.Listener(logFile, flushSecs, datalogBufferSize, &wg))
 
 	upgrader := newUpgrader(socketBufferSize)

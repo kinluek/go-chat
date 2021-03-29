@@ -8,7 +8,7 @@ func TestRegistry(t *testing.T) {
 	id1 := "1"
 	id2 := "2"
 
-	newHub1, err := registry.NewMessageHub(id1, 100)
+	newHub1, err := registry.NewMessageHub(id1, 100, 100)
 	if err != nil {
 		t.Fatalf("failed to create initial message hub id[%s]: %s", id1, err)
 	}
@@ -18,7 +18,7 @@ func TestRegistry(t *testing.T) {
 		t.Fatalf("should get the same message hub for same id - id[%s]", id1)
 	}
 
-	newHub2, err := registry.NewMessageHub(id2, 100)
+	newHub2, err := registry.NewMessageHub(id2, 100, 100)
 	if err != nil {
 		t.Fatalf("failed to create initial message hub id[%s]: %s", id2, err)
 	}
@@ -32,7 +32,7 @@ func TestRegistry(t *testing.T) {
 		t.Fatalf("new hub should not references other message hub")
 	}
 
-	_, err = registry.NewMessageHub(id1, 100)
+	_, err = registry.NewMessageHub(id1, 100, 100)
 	if err == nil {
 		t.Fatalf("should return an error for creating a message hub with same id")
 	}

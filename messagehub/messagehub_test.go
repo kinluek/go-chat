@@ -1,7 +1,6 @@
 package messagehub
 
 import (
-	"fmt"
 	"sync"
 	"testing"
 
@@ -9,7 +8,7 @@ import (
 )
 
 func TestMessageHub(t *testing.T) {
-	hub := New("hub-id", 10)
+	hub := New("hub-id", 20, 10)
 
 	user1Events, err := hub.Join("user1", 10)
 	if err != nil {
@@ -137,7 +136,7 @@ func TestMessageHub_AttachListener(t *testing.T) {
 		}
 	}()
 
-	hub := New("hub-id", 10)
+	hub := New("hub-id", 10, 10)
 	hub.AttachListener(listener)
 
 	userEvents, err := hub.Join("user1", 10)
@@ -150,7 +149,6 @@ func TestMessageHub_AttachListener(t *testing.T) {
 	go func() {
 		defer wg.Done()
 		for event := range userEvents {
-			fmt.Printf("user event - %v\n", event)
 			userReceivedEvents = append(userReceivedEvents, event)
 		}
 	}()

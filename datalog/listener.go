@@ -11,7 +11,7 @@ import (
 	"github.com/kinluek/go-chat/messagehub"
 )
 
-// Listener creates messagehub.Listener that can be used to log the events to a file for persistence.
+// Listener creates messagehub listener that can be used to log the events to a file for persistence.
 // A buffered writer is used to speed up writes, the writer is flushed on the flushInterval.
 // A WaitGroup can be used to wait on to make sure the store is completely flushed before shutting down.
 func Listener(logFile *os.File, flushInterval time.Duration, buffSize int, wg *sync.WaitGroup) chan<- messagehub.Event {

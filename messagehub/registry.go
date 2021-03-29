@@ -19,14 +19,14 @@ func NewRegistry() *Registry {
 }
 
 // NewMessageHub creates a new MessageHub.
-func (hub *Registry) NewMessageHub(id string, bufferSize int) (*MessageHub, error) {
+func (hub *Registry) NewMessageHub(id string, reqBufferSize, historySize int) (*MessageHub, error) {
 	hub.mtx.Lock()
 	defer hub.mtx.Unlock()
 	_, ok := hub.hubs[id]
 	if ok {
 		return nil, errors.Errorf("messagehub %s already exists", id)
 	}
-	chatRoom := New(id, bufferSize)
+	chatRoom := New(id, reqBufferSize, historySize)
 	hub.hubs[id] = chatRoom
 	return chatRoom, nil
 }
