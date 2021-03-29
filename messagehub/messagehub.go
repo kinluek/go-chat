@@ -45,18 +45,13 @@ type Request struct {
 	done          chan struct{}
 }
 
-// MiddleWare can be attached to the MessageHub, all requests will be streamed
-// through the middleware in an orderly fashion. The channel returned by
-// the middleware should not be buffered, this ensures that the requests
-// are pulled through correctly.
-type MiddleWare func(<-chan Request) <-chan Request
-
 // MessageHub represents a chat room and handles the message passing between clients
 type MessageHub struct {
-	id         string
-	clients    map[string]chan<- Event // key = userid
-	requests   chan Request
-	mids       []MiddleWare
+	id       string
+	clients  map[string]chan<- Event // key = userid
+	requests chan Request
+	listener chan<- Event
+
 	eventCount int
 
 	// history holds the last n (bufferSize) events in memory
@@ -72,7 +67,7 @@ type MessageHub struct {
 //
 // Max bufferSize is 1024.
 // Min bufferSize is 1.
-func New(id string, bufferSize int, mids ...MiddleWare) *MessageHub {
+func New(id string, bufferSize int) *MessageHub {
 
 	// having a minimum buffer size of one means
 	// we don't have to add extra logic to handle empty
@@ -88,7 +83,6 @@ func New(id string, bufferSize int, mids ...MiddleWare) *MessageHub {
 		id:       id,
 		clients:  make(map[string]chan<- Event),
 		requests: make(chan Request, bufferSize),
-		mids:     mids,
 
 		history: newEventsRingBuffer(bufferSize),
 
@@ -96,6 +90,18 @@ func New(id string, bufferSize int, mids ...MiddleWare) *MessageHub {
 	}
 	go hub.serve()
 	return hub
+}
+
+// AttachListener adds a listener to the messagehub, the listener will receive
+// all events that the clients received. This can be used to process events for
+// other purposes like storage.
+func (c *MessageHub) AttachListener(listener chan<- Event) {
+	c.listener = listener
+}
+
+// History gets the available in history of events in chronological order.
+func (c *MessageHub) History() []Event {
+	return c.history.events()
 }
 
 // Message sends a message to the MessageHub asynchronously.
@@ -115,11 +121,6 @@ func (c *MessageHub) Message(senderID string, message string) {
 	case c.requests <- req:
 	case <-c.closed:
 	}
-}
-
-// History gets the available in history of events in chronological order.
-func (c *MessageHub) History() []Event {
-	return c.history.events()
 }
 
 // Join adds a new user to the MessageHub. The event stream to listen on and any
@@ -203,14 +204,12 @@ func (c *MessageHub) Close() error {
 // through the MessageHub.
 func (c *MessageHub) serve() {
 
-	// apply generator middleware first
-	requestStream := wrapMiddleware(c.requests, c.generator)
+	for req := range c.requests {
+		c.eventCount++
 
-	// apply custom middleware
-	requestStream = wrapMiddleware(requestStream, c.mids...)
-
-	for req := range requestStream {
 		event := req.Event
+		event.ID = c.eventCount
+		event.UnixTime = time.Now().Unix()
 
 		c.history.push(event)
 
@@ -219,6 +218,7 @@ func (c *MessageHub) serve() {
 		case EventTypeMessage:
 			c.broadcast(event)
 		case EventTypeJoin:
+			// TODO: add multiple clients per userid
 			if _, ok := c.clients[event.UserID]; !ok {
 				c.clients[event.UserID] = req.eventStream
 				close(req.done)
@@ -242,6 +242,9 @@ func (c *MessageHub) serve() {
 				delete(c.clients, userid)
 				close(stream)
 			}
+			if c.listener != nil {
+				close(c.listener)
+			}
 			close(c.closed)
 			return
 		}
@@ -250,6 +253,9 @@ func (c *MessageHub) serve() {
 
 // broadcast publishes the provided event to all clients in the chat.
 func (c *MessageHub) broadcast(event Event) {
+	if c.listener != nil {
+		c.listener <- event
+	}
 	for _, stream := range c.clients {
 		select {
 		case stream <- event:
@@ -260,37 +266,4 @@ func (c *MessageHub) broadcast(event Event) {
 			// from blocking.
 		}
 	}
-}
-
-// generator is the first middleware that is applied to the request stream
-// and applies the sequential id and timestamps to events. It also closes
-// the outputted request stream once the MessageHub is closed so that other
-// middleware know when to exit.
-func (c *MessageHub) generator(in <-chan Request) <-chan Request {
-	out := make(chan Request)
-	go func() {
-		defer close(out)
-		for {
-			select {
-			case req := <-in:
-				c.eventCount++
-				req.Event.ID = c.eventCount
-				req.Event.UnixTime = time.Now().Unix()
-				out <- req
-			case <-c.closed:
-				return
-			}
-		}
-	}()
-	return out
-}
-
-func wrapMiddleware(requests <-chan Request, middleware ...MiddleWare) <-chan Request {
-	for i := 0; i < len(middleware); i++ {
-		mw := middleware[i]
-		if mw != nil {
-			requests = mw(requests)
-		}
-	}
-	return requests
 }

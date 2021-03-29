@@ -13,7 +13,7 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-func TestStore(t *testing.T) {
+func TestListener(t *testing.T) {
 	fileName := "test.log"
 	logFile, err := os.OpenFile(fileName, os.O_APPEND|os.O_CREATE|os.O_RDWR|os.O_TRUNC, 0644)
 	if err != nil {
@@ -21,39 +21,21 @@ func TestStore(t *testing.T) {
 	}
 	defer os.Remove(fileName)
 
-	// create input stream
-	input := make(chan messagehub.Request)
-
 	wg := sync.WaitGroup{}
 
-	// wrap input stream with store middleware
-	out := Store(logFile, time.Millisecond, &wg)(input)
+	listener := Listener(logFile, time.Millisecond, 10, &wg)
 
-	// drain output stream so requests are pulled through
-	go func() {
-		for range out {
-		}
-	}()
-
-	inputs := []messagehub.Request{
-		{
-			Event: messagehub.Event{ID: 1},
-		},
-		{
-			Event: messagehub.Event{ID: 2},
-		},
-		{
-			Event: messagehub.Event{ID: 3},
-		},
-		{
-			Event: messagehub.Event{ID: 4},
-		},
+	inputs := []messagehub.Event{
+		{ID: 1},
+		{ID: 2},
+		{ID: 3},
+		{ID: 4},
 	}
 
-	for _, req := range inputs {
-		input <- req
+	for _, input := range inputs {
+		listener <- input
 	}
-	close(input)
+	close(listener)
 	wg.Wait()
 
 	got := readEventsFromFile(t, logFile)

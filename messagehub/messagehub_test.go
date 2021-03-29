@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"sync"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/assert"
 )
@@ -33,14 +32,9 @@ func TestMessageHub(t *testing.T) {
 	wg.Add(3)
 
 	go func() {
+		defer wg.Done()
 		for event := range user1Events {
 			user1ReceivedEvents = append(user1ReceivedEvents, event)
-			if event.Type == EventTypeMessage {
-				go func() {
-					time.Sleep(20 * time.Millisecond)
-					wg.Done()
-				}()
-			}
 		}
 	}()
 
@@ -48,9 +42,6 @@ func TestMessageHub(t *testing.T) {
 		defer wg.Done()
 		for event := range user2Events {
 			user2ReceivedEvents = append(user2ReceivedEvents, event)
-			if event.Type == EventTypeClose {
-				return
-			}
 		}
 	}()
 
@@ -58,9 +49,6 @@ func TestMessageHub(t *testing.T) {
 		defer wg.Done()
 		for event := range user3Events {
 			user3ReceivedEvents = append(user3ReceivedEvents, event)
-			if event.Type == EventTypeClose {
-				return
-			}
 		}
 	}()
 
@@ -133,27 +121,24 @@ func TestMessageHub(t *testing.T) {
 
 }
 
-func TestMessageHub_Middleware(t *testing.T) {
+func TestMessageHub_AttachListener(t *testing.T) {
 
 	wg := sync.WaitGroup{}
 	wg.Add(2)
 
 	// Set up middleware which intercepts and stores the events.
-	storageEvents := make([]Event, 0)
-	storageMiddleware := func(in <-chan Request) <-chan Request {
-		out := make(chan Request)
-		go func() {
-			defer wg.Done()
-			for req := range in {
-				fmt.Printf("middleware event - %v\n", req.Event)
-				storageEvents = append(storageEvents, req.Event)
-				out <- req
-			}
-		}()
-		return out
-	}
+	listenerEvents := make([]Event, 0)
 
-	hub := New("hub-id", 10, storageMiddleware)
+	listener := make(chan Event, 100)
+	go func() {
+		defer wg.Done()
+		for event := range listener {
+			listenerEvents = append(listenerEvents, event)
+		}
+	}()
+
+	hub := New("hub-id", 10)
+	hub.AttachListener(listener)
 
 	userEvents, err := hub.Join("user1", 10)
 	if err != nil {
@@ -167,9 +152,6 @@ func TestMessageHub_Middleware(t *testing.T) {
 		for event := range userEvents {
 			fmt.Printf("user event - %v\n", event)
 			userReceivedEvents = append(userReceivedEvents, event)
-			if event.Type == EventTypeClose {
-				return
-			}
 		}
 	}()
 
@@ -180,7 +162,7 @@ func TestMessageHub_Middleware(t *testing.T) {
 
 	wg.Wait()
 
-	assert.Equal(t, storageEvents, userReceivedEvents, "middleware events should be equal to user received events")
+	assert.Equal(t, listenerEvents, userReceivedEvents, "middleware events should be equal to user received events")
 
 }
 

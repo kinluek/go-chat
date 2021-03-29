@@ -47,6 +47,10 @@ const Login = ({ setUser }) => {
         <Typography component="h1" variant="h5">
           Select a username
         </Typography>
+        <Typography component="p" variant="p">
+          signing in with a username already in use will disconnect the existing
+          user
+        </Typography>
         <form className={classes.form} noValidate onSubmit={handleSubmit}>
           <TextField
             variant="outlined"

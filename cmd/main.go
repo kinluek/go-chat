@@ -116,17 +116,19 @@ func getEventsHistory(hub *messagehub.MessageHub) http.HandlerFunc {
 }
 
 var (
-	port             int
-	socketBufferSize int
-	eventBufferSize  int
-	eventLog         string
-	flushInterval    int
+	port              int
+	socketBufferSize  int
+	eventBufferSize   int
+	datalogBufferSize int
+	eventLog          string
+	flushInterval     int
 )
 
 func main() {
 	flag.IntVar(&port, "port", 8080, "port for server to listen on")
 	flag.IntVar(&socketBufferSize, "socket-buffer-size", 1024, "sets the size of the read and write socket buffers")
 	flag.IntVar(&eventBufferSize, "event-buffer-size", 1024, "size of in memory events buffer which holds most recent events")
+	flag.IntVar(&datalogBufferSize, "datalog-buffer-size", 1024, "size of the datalog channel buffer")
 	flag.StringVar(&eventLog, "event-log-path", "./events.log", "the file path to log events for persistence")
 	flag.IntVar(&flushInterval, "flush-interval-secs", 5, "how often to flush events to log file in seconds")
 	flag.Parse()
@@ -143,7 +145,9 @@ func main() {
 	defer logFile.Close()
 
 	wg := sync.WaitGroup{}
-	hub := messagehub.New("GoChat", eventBufferSize, datalog.Store(logFile, flushSecs, &wg))
+	hub := messagehub.New("GoChat", eventBufferSize)
+	hub.AttachListener(datalog.Listener(logFile, flushSecs, datalogBufferSize, &wg))
+
 	upgrader := newUpgrader(socketBufferSize)
 
 	http.HandleFunc("/chat", handleConnection(hub, upgrader))
@@ -168,5 +172,4 @@ func main() {
 	wg.Wait()
 
 	log.Println("shutdown complete")
-
 }
