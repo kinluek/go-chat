@@ -92,7 +92,7 @@ const useWebSocket = (username) => {
 
   useEffect(() => {
     const socket = new WebSocket(
-      `ws://${serverHost}/chat?username=${username}`
+      `ws://${serverHost}/chat?username=${username}&sessionid=${Date.now()}`
     );
     socket.addEventListener("message", (event) => {
       setEvents((events) =>
@@ -127,7 +127,7 @@ const ChatBox = ({ username }) => {
   return (
     <Container component="main" className={classes.root}>
       <Typography component="h2" variant="h6" color="primary" gutterBottom>
-        Go Chat
+       { `Go Chat - Logged in as: ${username}` }
       </Typography>
       <Grid container spacing={3}>
         <Grid item xs={12}>
@@ -259,8 +259,7 @@ const outputMessage = (username, event) => {
       MessageComponent = CloseMessage;
       break;
     default:
-      MessageComponent = TextMessage;
-      break;
+      return null
   }
 
   return <MessageComponent username={username} event={event} />;

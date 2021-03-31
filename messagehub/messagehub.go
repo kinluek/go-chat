@@ -15,10 +15,16 @@ const (
 	// EventTypeMessage is the event type for when a message is sent to the chat.
 	EventTypeMessage = "message"
 
-	// EventTypeJoin happens when a client joins the chat.
+	// EventTypeAdd happens when a new session is added for an existing user.
+	EventTypeAdd = "add"
+
+	// EventTypeJoin happens when a new user is added with their first session
 	EventTypeJoin = "join"
 
-	// EventTypeLeave happens when a client leaves the chat.
+	// EventTypeRemove happens when a session is removed for a user but other sessions still exist.
+	EventTypeRemove = "remove"
+
+	// EventTypeLeave happens when a user removes their last session.
 	EventTypeLeave = "leave"
 
 	// EventTypeClose happens when the chat is closed.
@@ -31,8 +37,9 @@ type Event struct {
 	ID         int    `json:"id"`
 	ChatRoomID string `json:"chatroomId"`
 	Type       string `json:"type"`
-	UserID     string `json:"userId,omitempty"`  // UserID will be empty for Type "close"
-	Message    string `json:"message,omitempty"` // Message will be non-nil for Type "message"
+	UserID     string `json:"userId,omitempty"`    // UserID will be empty for Type "close"
+	SessionID  string `json:"sessionId,omitempty"` // SessionID will be empty for Type "close" and "message"
+	Message    string `json:"message,omitempty"`   // Message will be non-nil for Type "message"
 	UnixTime   int64  `json:"unixTime"`
 }
 
@@ -47,8 +54,10 @@ type Request struct {
 
 // MessageHub represents a chat room and handles the message passing between clients
 type MessageHub struct {
-	id       string
-	clients  map[string]chan<- Event // key = userid
+	id string
+
+	// clients holds a set of sessions for each user
+	clients  map[string]map[string]chan<- Event
 	requests chan Request
 	listener chan<- Event
 
@@ -67,7 +76,7 @@ type MessageHub struct {
 func New(id string, reqBufferSize, historySize int) *MessageHub {
 	hub := &MessageHub{
 		id:       id,
-		clients:  make(map[string]chan<- Event),
+		clients:  make(map[string]map[string]chan<- Event),
 		requests: make(chan Request, reqBufferSize),
 
 		history: newEventsHistoryBuffer(historySize),
@@ -109,15 +118,15 @@ func (c *MessageHub) Message(senderID string, message string) {
 	}
 }
 
-// Join adds a new user to the MessageHub. The event stream to listen on and any
-// recent events are returned.
-// The recent events are ordered from oldest to most recent.
-func (c *MessageHub) Join(userID string, streamBuffer int) (<-chan Event, error) {
+// Add adds a new user session to the MessageHub. The event stream to listen on is returned.
+// There can be multiple sessions per userID.
+func (c *MessageHub) Add(userID, sessionID string, streamBuffer int) (<-chan Event, error) {
 	eventStream := make(chan Event, streamBuffer)
 	event := Event{
-		Type:       EventTypeJoin,
+		Type:       EventTypeAdd,
 		ChatRoomID: c.id,
 		UserID:     userID,
+		SessionID:  sessionID,
 	}
 	req := Request{
 		Event:       event,
@@ -140,12 +149,13 @@ func (c *MessageHub) Join(userID string, streamBuffer int) (<-chan Event, error)
 	}
 }
 
-// Leave removes a user from the MessageHub.
-func (c *MessageHub) Leave(userID string) error {
+// Remove removes a user session from the MessageHub.
+func (c *MessageHub) Remove(userID, sessionID string) error {
 	event := Event{
-		Type:       EventTypeLeave,
+		Type:       EventTypeRemove,
 		ChatRoomID: c.id,
 		UserID:     userID,
+		SessionID:  sessionID,
 	}
 	req := Request{
 		Event: event,
@@ -189,50 +199,21 @@ func (c *MessageHub) Close() error {
 // serve is ran in the background to serve and synchronize requests
 // through the MessageHub.
 func (c *MessageHub) serve() {
-
 	for req := range c.requests {
 		c.eventCount++
-
-		// add serial key and timestamp to event.
-		event := req.Event
-		event.ID = c.eventCount
-		event.UnixTime = time.Now().Unix()
-
-		c.history.push(event)
+		req.Event.ID = c.eventCount
+		req.Event.UnixTime = time.Now().Unix()
 
 		// handle request based on event type.
-		switch event.Type {
+		switch req.Event.Type {
 		case EventTypeMessage:
-			c.broadcast(event)
-		case EventTypeJoin:
-			// TODO: add multiple clients per userid
-			if _, ok := c.clients[event.UserID]; !ok {
-				c.clients[event.UserID] = req.eventStream
-				close(req.done)
-				c.broadcast(event)
-				continue
-			}
-			c.clients[event.UserID] = req.eventStream
-			close(req.done)
-		case EventTypeLeave:
-			if stream, ok := c.clients[event.UserID]; ok {
-				delete(c.clients, event.UserID)
-				close(stream)
-				close(req.done)
-				c.broadcast(event)
-				continue
-			}
-			close(req.done)
+			c.broadcast(req.Event)
+		case EventTypeAdd:
+			c.add(req)
+		case EventTypeRemove:
+			c.remove(req)
 		case EventTypeClose:
-			c.broadcast(event)
-			for userid, stream := range c.clients {
-				delete(c.clients, userid)
-				close(stream)
-			}
-			if c.listener != nil {
-				close(c.listener)
-			}
-			close(c.closed)
+			c.close(req)
 			return
 		}
 	}
@@ -240,17 +221,73 @@ func (c *MessageHub) serve() {
 
 // broadcast publishes the provided event to all clients in the chat.
 func (c *MessageHub) broadcast(event Event) {
+	c.history.push(event)
 	if c.listener != nil {
 		c.listener <- event
 	}
-	for _, stream := range c.clients {
-		select {
-		case stream <- event:
-		default:
-			// events are dropped if no client is
-			// actively listening to their eventStream
-			// this stops the entire MessageHub server
-			// from blocking.
+	for _, sessions := range c.clients {
+		for _, stream := range sessions {
+			select {
+			case stream <- event:
+			default:
+				// events are dropped if no client is
+				// actively listening to their eventStream
+				// this stops the entire MessageHub server
+				// from blocking.
+			}
 		}
 	}
+}
+
+// add handles the add request.
+func (c *MessageHub) add(req Request) {
+	event := req.Event
+	sessions, ok := c.clients[event.UserID]
+	if !ok {
+		event.Type = EventTypeJoin
+		sessions := make(map[string]chan<- Event)
+		sessions[event.SessionID] = req.eventStream
+		c.clients[event.UserID] = sessions
+		close(req.done)
+		c.broadcast(event)
+		return
+	}
+	if _, ok := sessions[event.SessionID]; !ok {
+		sessions[event.SessionID] = req.eventStream
+		c.broadcast(event)
+	}
+	close(req.done)
+}
+
+// remove handles the remove request.
+func (c *MessageHub) remove(req Request) {
+	event := req.Event
+	if sessions, ok := c.clients[event.UserID]; ok {
+		if stream, ok := sessions[event.SessionID]; ok {
+			delete(sessions, event.SessionID)
+			close(stream)
+			close(req.done)
+			if len(sessions) == 0 {
+				event.Type = EventTypeLeave
+				delete(c.clients, event.UserID)
+			}
+			c.broadcast(event)
+			return
+		}
+	}
+	close(req.done)
+}
+
+// close handles the close request.
+func (c *MessageHub) close(req Request) {
+	c.broadcast(req.Event)
+	for _, sessions := range c.clients {
+		for _, stream := range sessions {
+			close(stream)
+		}
+	}
+	if c.listener != nil {
+		close(c.listener)
+	}
+	close(c.closed)
 }

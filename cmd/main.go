@@ -60,24 +60,29 @@ func handleConnection(hub *messagehub.MessageHub, upgrader *websocket.Upgrader) 
 			return
 		}
 		defer conn.Close()
-		userName := r.FormValue("username")
-		if userName == "" {
+		username := r.FormValue("username")
+		if username == "" {
 			log.Printf("[INFO]: request missing username")
 			return
 		}
-		eventStream, err := hub.Join(userName, 100)
+		sessionID := r.FormValue("sessionid")
+		if sessionID == "" {
+			log.Printf("[INFO]: request missing sessionid")
+			return
+		}
+		eventStream, err := hub.Add(username, sessionID, 100)
 		if err != nil {
 			log.Printf("[ERROR]: failed to join - %v", err)
 			return
 		}
-		defer hub.Leave(userName)
+		defer hub.Remove(username, sessionID)
 
 		done := make(chan struct{}, 2)
-		go readMessages(userName, conn, hub, done)
-		go sendMessages(userName, conn, eventStream, done)
+		go readMessages(username, conn, hub, done)
+		go sendMessages(username, conn, eventStream, done)
 		<-done
 
-		log.Printf("[INFO]: user %s disconnected", userName)
+		log.Printf("[INFO]: user %s disconnected", username)
 	}
 }
 

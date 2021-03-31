@@ -10,25 +10,37 @@ import (
 func TestMessageHub(t *testing.T) {
 	hub := New("hub-id", 20, 10)
 
-	user1Events, err := hub.Join("user1", 10)
+	// should create "join" event
+	user1Events, err := hub.Add("user1", "session1", 10)
 	if err != nil {
 		t.Fatal(err)
 	}
-	user2Events, err := hub.Join("user2", 10)
+
+	// should create "join" event
+	user2Events1, err := hub.Add("user2", "session1", 10)
 	if err != nil {
 		t.Fatal(err)
 	}
-	user3Events, err := hub.Join("user3", 10)
+
+	// should create "add" event as user2 is adding a second session
+	user2Events2, err := hub.Add("user2", "session2", 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// should create "join" event
+	user3Events, err := hub.Add("user3", "session1", 10)
 	if err != nil {
 		t.Fatal(err)
 	}
 
 	user1ReceivedEvents := make([]Event, 0)
-	user2ReceivedEvents := make([]Event, 0)
+	user2ReceivedEvents1 := make([]Event, 0)
+	user2ReceivedEvents2 := make([]Event, 0)
 	user3ReceivedEvents := make([]Event, 0)
 
 	wg := sync.WaitGroup{}
-	wg.Add(3)
+	wg.Add(4)
 
 	go func() {
 		defer wg.Done()
@@ -39,8 +51,14 @@ func TestMessageHub(t *testing.T) {
 
 	go func() {
 		defer wg.Done()
-		for event := range user2Events {
-			user2ReceivedEvents = append(user2ReceivedEvents, event)
+		for event := range user2Events1 {
+			user2ReceivedEvents1 = append(user2ReceivedEvents1, event)
+		}
+	}()
+	go func() {
+		defer wg.Done()
+		for event := range user2Events2 {
+			user2ReceivedEvents2 = append(user2ReceivedEvents2, event)
 		}
 	}()
 
@@ -52,48 +70,67 @@ func TestMessageHub(t *testing.T) {
 	}()
 
 	hub.Message("send-id", "hello")
-	hub.Leave("user1")
+
+	// should create "leave" event
+	hub.Remove("user1", "session1")
+
+	// should create "remove" event as user2 still has existing session
+	hub.Remove("user2", "session2")
 	hub.Message("send-id", "user1 left")
 	hub.Close()
 
 	wg.Wait()
 
 	expectedEvents1 := []Event{
-		{ID: 1, Type: "join", ChatRoomID: "hub-id", UserID: "user1"},
-		{ID: 2, Type: "join", ChatRoomID: "hub-id", UserID: "user2"},
-		{ID: 3, Type: "join", ChatRoomID: "hub-id", UserID: "user3"},
-		{ID: 4, Type: "message", ChatRoomID: "hub-id", UserID: "send-id", Message: "hello"},
+		{ID: 1, Type: "join", ChatRoomID: "hub-id", UserID: "user1", SessionID: "session1"},
+		{ID: 2, Type: "join", ChatRoomID: "hub-id", UserID: "user2", SessionID: "session1"},
+		{ID: 3, Type: "add", ChatRoomID: "hub-id", UserID: "user2", SessionID: "session2"},
+		{ID: 4, Type: "join", ChatRoomID: "hub-id", UserID: "user3", SessionID: "session1"},
+		{ID: 5, Type: "message", ChatRoomID: "hub-id", UserID: "send-id", Message: "hello"},
 	}
 
-	expectedEvents2 := []Event{
-		{ID: 2, Type: "join", ChatRoomID: "hub-id", UserID: "user2"},
-		{ID: 3, Type: "join", ChatRoomID: "hub-id", UserID: "user3"},
-		{ID: 4, Type: "message", ChatRoomID: "hub-id", UserID: "send-id", Message: "hello"},
-		{ID: 5, Type: "leave", ChatRoomID: "hub-id", UserID: "user1"},
-		{ID: 6, Type: "message", ChatRoomID: "hub-id", UserID: "send-id", Message: "user1 left"},
-		{ID: 7, Type: "close", ChatRoomID: "hub-id"},
+	expectedEvents21 := []Event{
+		{ID: 2, Type: "join", ChatRoomID: "hub-id", UserID: "user2", SessionID: "session1"},
+		{ID: 3, Type: "add", ChatRoomID: "hub-id", UserID: "user2", SessionID: "session2"},
+		{ID: 4, Type: "join", ChatRoomID: "hub-id", UserID: "user3", SessionID: "session1"},
+		{ID: 5, Type: "message", ChatRoomID: "hub-id", UserID: "send-id", Message: "hello"},
+		{ID: 6, Type: "leave", ChatRoomID: "hub-id", UserID: "user1", SessionID: "session1"},
+		{ID: 7, Type: "remove", ChatRoomID: "hub-id", UserID: "user2", SessionID: "session2"},
+		{ID: 8, Type: "message", ChatRoomID: "hub-id", UserID: "send-id", Message: "user1 left"},
+		{ID: 9, Type: "close", ChatRoomID: "hub-id"},
+	}
+
+	expectedEvents22 := []Event{
+		{ID: 3, Type: "add", ChatRoomID: "hub-id", UserID: "user2", SessionID: "session2"},
+		{ID: 4, Type: "join", ChatRoomID: "hub-id", UserID: "user3", SessionID: "session1"},
+		{ID: 5, Type: "message", ChatRoomID: "hub-id", UserID: "send-id", Message: "hello"},
+		{ID: 6, Type: "leave", ChatRoomID: "hub-id", UserID: "user1", SessionID: "session1"},
 	}
 
 	expectedEvents3 := []Event{
-		{ID: 3, Type: "join", ChatRoomID: "hub-id", UserID: "user3"},
-		{ID: 4, Type: "message", ChatRoomID: "hub-id", UserID: "send-id", Message: "hello"},
-		{ID: 5, Type: "leave", ChatRoomID: "hub-id", UserID: "user1"},
-		{ID: 6, Type: "message", ChatRoomID: "hub-id", UserID: "send-id", Message: "user1 left"},
-		{ID: 7, Type: "close", ChatRoomID: "hub-id"},
+		{ID: 4, Type: "join", ChatRoomID: "hub-id", UserID: "user3", SessionID: "session1"},
+		{ID: 5, Type: "message", ChatRoomID: "hub-id", UserID: "send-id", Message: "hello"},
+		{ID: 6, Type: "leave", ChatRoomID: "hub-id", UserID: "user1", SessionID: "session1"},
+		{ID: 7, Type: "remove", ChatRoomID: "hub-id", UserID: "user2", SessionID: "session2"},
+		{ID: 8, Type: "message", ChatRoomID: "hub-id", UserID: "send-id", Message: "user1 left"},
+		{ID: 9, Type: "close", ChatRoomID: "hub-id"},
 	}
 
 	expectedHistory := []Event{
-		{ID: 1, Type: "join", ChatRoomID: "hub-id", UserID: "user1"},
-		{ID: 2, Type: "join", ChatRoomID: "hub-id", UserID: "user2"},
-		{ID: 3, Type: "join", ChatRoomID: "hub-id", UserID: "user3"},
-		{ID: 4, Type: "message", ChatRoomID: "hub-id", UserID: "send-id", Message: "hello"},
-		{ID: 5, Type: "leave", ChatRoomID: "hub-id", UserID: "user1"},
-		{ID: 6, Type: "message", ChatRoomID: "hub-id", UserID: "send-id", Message: "user1 left"},
-		{ID: 7, Type: "close", ChatRoomID: "hub-id"},
+		{ID: 1, Type: "join", ChatRoomID: "hub-id", UserID: "user1", SessionID: "session1"},
+		{ID: 2, Type: "join", ChatRoomID: "hub-id", UserID: "user2", SessionID: "session1"},
+		{ID: 3, Type: "add", ChatRoomID: "hub-id", UserID: "user2", SessionID: "session2"},
+		{ID: 4, Type: "join", ChatRoomID: "hub-id", UserID: "user3", SessionID: "session1"},
+		{ID: 5, Type: "message", ChatRoomID: "hub-id", UserID: "send-id", Message: "hello"},
+		{ID: 6, Type: "leave", ChatRoomID: "hub-id", UserID: "user1", SessionID: "session1"},
+		{ID: 7, Type: "remove", ChatRoomID: "hub-id", UserID: "user2", SessionID: "session2"},
+		{ID: 8, Type: "message", ChatRoomID: "hub-id", UserID: "send-id", Message: "user1 left"},
+		{ID: 9, Type: "close", ChatRoomID: "hub-id"},
 	}
 
 	assert.Equal(t, expectedEvents1, removeTime(user1ReceivedEvents), "user1 should have received the correct events")
-	assert.Equal(t, expectedEvents2, removeTime(user2ReceivedEvents), "user2 should have received the correct events")
+	assert.Equal(t, expectedEvents21, removeTime(user2ReceivedEvents1), "user2 session1 should have received the correct events")
+	assert.Equal(t, expectedEvents22, removeTime(user2ReceivedEvents2), "user2 session2 should have received the correct events")
 	assert.Equal(t, expectedEvents3, removeTime(user3ReceivedEvents), "user3 should have received the correct events")
 	assert.Equal(t, expectedHistory, removeTime(hub.History()), "history should contain all the events")
 
@@ -101,15 +138,16 @@ func TestMessageHub(t *testing.T) {
 	hub.Message("send-id", "hello")
 
 	assert.Equal(t, 0, len(user1Events), "user1 should have 0 events in events buffer")
-	assert.Equal(t, 0, len(user2Events), "user2 should have 0 events in events buffer")
+	assert.Equal(t, 0, len(user2Events1), "user2 session1 should have 0 events in events buffer")
+	assert.Equal(t, 0, len(user2Events2), "user2 session2 should have 0 events in events buffer")
 	assert.Equal(t, 0, len(user3Events), "user3 should have 0 events in events buffer")
 
 	// Operating on closed hub should return ErrClosed.
-	_, err = hub.Join("user4", 10)
+	_, err = hub.Add("user4", "session1", 10)
 	if err != ErrClosed {
 		t.Fatal("should have returned error")
 	}
-	err = hub.Leave("user2")
+	err = hub.Remove("user2", "session1")
 	if err != ErrClosed {
 		t.Fatal("should have returned error")
 	}
@@ -139,7 +177,7 @@ func TestMessageHub_AttachListener(t *testing.T) {
 	hub := New("hub-id", 10, 10)
 	hub.AttachListener(listener)
 
-	userEvents, err := hub.Join("user1", 10)
+	userEvents, err := hub.Add("user1", "session1", 10)
 	if err != nil {
 		t.Fatal(err)
 	}
