@@ -173,5 +173,4 @@ func main() {
 	hub.Close()
 	wg.Wait()
 
-	log.Println("shutdown complete")
 }

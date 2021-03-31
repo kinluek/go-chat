@@ -68,6 +68,16 @@ const useStyles = makeStyles((theme) => ({
 
 const serverHost = process.env.REACT_APP_WEBSOCKET_ENDPOINT || "localhost:8080";
 
+const useMessage = (socketRef) => {
+  const [message, setMessage] = useState("");
+  const handleSubmit = () => {
+    if (message === "") return;
+    socketRef.current.send(message);
+    setMessage("");
+  };
+  return [message, setMessage, handleSubmit];
+};
+
 const useScrollOnNewEvent = (events) => {
   useEffect(() => {
     document
@@ -76,7 +86,10 @@ const useScrollOnNewEvent = (events) => {
   }, [events]);
 };
 
-const useWebSocket = (socketRef, username, setEvents) => {
+const useWebSocket = (username) => {
+  let socketRef = useRef();
+  const [events, setEvents] = useState([]);
+
   useEffect(() => {
     const socket = new WebSocket(
       `ws://${serverHost}/chat?username=${username}`
@@ -100,22 +113,16 @@ const useWebSocket = (socketRef, username, setEvents) => {
 
     return () => socket.close(1001);
   }, [socketRef, username, setEvents]);
+
+  return [events, socketRef];
 };
 
 const ChatBox = ({ username }) => {
   const classes = useStyles();
-  const [events, setEvents] = useState([]);
-  const [message, setMessage] = useState("");
-  let socketRef = useRef();
 
+  const [events, socketRef] = useWebSocket(username);
+  const [message, setMessage, handleSubmit] = useMessage(socketRef);
   useScrollOnNewEvent(events);
-  useWebSocket(socketRef, username, setEvents);
-
-  const handleSubmit = () => {
-    if (message === "") return;
-    socketRef.current.send(message);
-    setMessage("");
-  };
 
   return (
     <Container component="main" className={classes.root}>

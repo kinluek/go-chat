@@ -30,9 +30,7 @@ const useStyles = makeStyles((theme) => ({
   },
 }));
 
-const Login = ({ setUser }) => {
-  const classes = useStyles();
-
+const useLogin = (setUser) => {
   const [username, setUsername] = useState("");
 
   const handleSubmit = async (event) => {
@@ -40,6 +38,14 @@ const Login = ({ setUser }) => {
     if (username === "") alert("please enter a username");
     setUser(username);
   };
+
+  return [username, setUsername, handleSubmit];
+};
+
+const Login = ({ setUser }) => {
+  const classes = useStyles();
+
+  const [username, setUsername, handleSubmit] = useLogin(setUser);
 
   return (
     <Container component="main" maxWidth="xs">
