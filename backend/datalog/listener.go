@@ -8,7 +8,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/kinluek/go-chat/messagehub"
+	"github.com/kinluek/go-chat/backend/messagehub"
 )
 
 // Listener creates messagehub listener that can be used to log the events to a file for persistence.

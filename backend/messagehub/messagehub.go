@@ -1,14 +1,13 @@
 package messagehub
 
 import (
+	"errors"
 	"time"
-
-	"github.com/pkg/errors"
 )
 
 var (
 	// ErrClosed is returned when an operation is performed on a closed MessageHub.
-	ErrClosed = errors.Errorf("cannot perform operation on closed messagehub")
+	ErrClosed = errors.New("cannot perform operation on closed messagehub")
 )
 
 const (

@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/kinluek/go-chat/messagehub"
+	"github.com/kinluek/go-chat/backend/messagehub"
 	"github.com/stretchr/testify/assert"
 )
 
