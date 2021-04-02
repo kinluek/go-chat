@@ -81,10 +81,12 @@ func main() {
 	<-shutdown
 
 	log.Println("shutting down...")
+
 	hub.Close()
 	wg.Wait()
 	server.Close()
 
+	log.Println("shutdown complete")
 }
 
 func newUpgrader(bufferSize int) *websocket.Upgrader {

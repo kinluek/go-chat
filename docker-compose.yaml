@@ -1,0 +1,25 @@
+version: '3'
+
+services:
+
+  backend:
+    container_name: gochat-backend
+    build:
+      context: "./backend"
+    command: "-event-log-path=/log/events.log"
+    volumes: 
+      - "./log:/log"
+    ports: 
+      - "8080:8080"
+
+  frontend:
+    container_name: gochat-frontend
+    build:
+      context: "./frontend"
+    ports:
+      - 3000:3000
+    volumes:
+      - "./frontend:/app"
+      - "/app/node_modules"
+    environment: 
+      REACT_APP_SERVER_HOST: localhost:8080

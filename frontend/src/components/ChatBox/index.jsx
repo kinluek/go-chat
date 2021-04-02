@@ -66,7 +66,7 @@ const useStyles = makeStyles((theme) => ({
   },
 }));
 
-const serverHost = process.env.REACT_APP_WEBSOCKET_ENDPOINT || "localhost:8080";
+const serverHost = process.env.REACT_APP_SERVER_HOST || "localhost:8080";
 
 const useMessage = (socketRef) => {
   const [message, setMessage] = useState("");

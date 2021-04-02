@@ -42,9 +42,7 @@ type Event struct {
 	UnixTime   int64  `json:"unixTime"`
 }
 
-// Request are created and sent through the MessageHub, they can be
-// intercepted with middleware.
-type Request struct {
+type request struct {
 	Event         Event
 	eventStream   chan<- Event
 	catchUpEvents chan *eventHistoryBuffer
@@ -57,7 +55,7 @@ type MessageHub struct {
 
 	// clients holds a set of sessions for each user
 	clients  map[string]map[string]chan<- Event
-	requests chan Request
+	requests chan request
 	listener chan<- Event
 
 	eventCount int
@@ -76,7 +74,7 @@ func New(id string, reqBufferSize, historySize int) *MessageHub {
 	hub := &MessageHub{
 		id:       id,
 		clients:  make(map[string]map[string]chan<- Event),
-		requests: make(chan Request, reqBufferSize),
+		requests: make(chan request, reqBufferSize),
 
 		history: newEventsHistoryBuffer(historySize),
 
@@ -107,7 +105,7 @@ func (c *MessageHub) Message(senderID string, message string) {
 		UserID:     senderID,
 		Message:    message,
 	}
-	req := Request{Event: event}
+	req := request{Event: event}
 
 	// The messagehub server may already be closed so we
 	// must select over the channels to prevent blocking.
@@ -127,7 +125,7 @@ func (c *MessageHub) Add(userID, sessionID string, streamBuffer int) (<-chan Eve
 		UserID:     userID,
 		SessionID:  sessionID,
 	}
-	req := Request{
+	req := request{
 		Event:       event,
 		eventStream: eventStream,
 		done:        make(chan struct{}),
@@ -156,7 +154,7 @@ func (c *MessageHub) Remove(userID, sessionID string) error {
 		UserID:     userID,
 		SessionID:  sessionID,
 	}
-	req := Request{
+	req := request{
 		Event: event,
 		done:  make(chan struct{}),
 	}
@@ -179,7 +177,7 @@ func (c *MessageHub) Close() error {
 		Type:       EventTypeClose,
 		ChatRoomID: c.id,
 	}
-	req := Request{
+	req := request{
 		Event: event,
 		done:  make(chan struct{}),
 	}
@@ -239,7 +237,7 @@ func (c *MessageHub) broadcast(event Event) {
 }
 
 // add handles the add request.
-func (c *MessageHub) add(req Request) {
+func (c *MessageHub) add(req request) {
 	event := req.Event
 	sessions, ok := c.clients[event.UserID]
 	if !ok {
@@ -259,7 +257,7 @@ func (c *MessageHub) add(req Request) {
 }
 
 // remove handles the remove request.
-func (c *MessageHub) remove(req Request) {
+func (c *MessageHub) remove(req request) {
 	event := req.Event
 	if sessions, ok := c.clients[event.UserID]; ok {
 		if stream, ok := sessions[event.SessionID]; ok {
@@ -278,7 +276,7 @@ func (c *MessageHub) remove(req Request) {
 }
 
 // close handles the close request.
-func (c *MessageHub) close(req Request) {
+func (c *MessageHub) close(req request) {
 	c.broadcast(req.Event)
 	for _, sessions := range c.clients {
 		for _, stream := range sessions {
