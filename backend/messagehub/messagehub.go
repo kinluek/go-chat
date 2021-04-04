@@ -1,3 +1,5 @@
+// Package messagehub provides a thread safe event bus which callers can subscribe to.
+// Any events sent through the message hub are received by all subscribed clients.
 package messagehub
 
 import (
@@ -88,6 +90,9 @@ func New(id string, reqBufferSize, historySize int) *MessageHub {
 // all events that the clients received. This can be used to process events for
 // other purposes like storage.
 func (c *MessageHub) AttachListener(listener chan<- Event) {
+
+	// we do not need to use any synchronisation primitives here as this
+	// should just be a one time operation.
 	c.listener = listener
 }
 
