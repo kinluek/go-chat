@@ -50,6 +50,7 @@ func main() {
 	defer eventLog.Close()
 
 	wg := sync.WaitGroup{}
+	wg.Add(1)
 
 	// Setup the message hub.
 	hub := messagehub.New("GoChat", hubBufferSize, eventCacheSize)

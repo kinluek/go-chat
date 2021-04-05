@@ -1,6 +1,6 @@
 .PHONY: build run stop
 
-# rebuilds the containers.
+# rebuilds the containers, should run this if any of the go code is changed.
 build:
 	docker-compose build
 

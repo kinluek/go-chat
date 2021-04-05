@@ -9,6 +9,8 @@ Make sure you have docker installed and run `make run` to spin the application u
 
 If you are working on windows and you do not have `make` installed then run the docker commands in the makefile directly. 
 
+Events will be logged to `<project_root>/log/events.log` as a rudimentary datastore.
+
 ## Package messagehub
 
 The [messagehub](./backend/messagehub) package provides a thread safe event bus which callers can subscribe to. Any events sent through the message hub are received by all subscribed clients. 
@@ -102,6 +104,7 @@ if err != nil {
 defer eventLog.Close()
 
 wg := sync.WaitGroup{}
+wg.Add(1)
 
 // This returns an event channel that can be attached to the message hub.
 // All events going through the message hub will be sent to this channel and logged the file for persistence.

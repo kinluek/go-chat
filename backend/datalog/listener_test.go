@@ -22,6 +22,7 @@ func TestListener(t *testing.T) {
 	defer os.Remove(fileName)
 
 	wg := sync.WaitGroup{}
+	wg.Add(1)
 
 	listener := Listener(logFile, time.Millisecond, 10, &wg)
 

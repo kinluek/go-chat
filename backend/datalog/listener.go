@@ -16,7 +16,6 @@ import (
 // A WaitGroup can be used to wait on to make sure the store is completely flushed before shutting down.
 func Listener(logFile *os.File, flushInterval time.Duration, buffSize int, wg *sync.WaitGroup) chan<- messagehub.Event {
 	listener := make(chan messagehub.Event, buffSize)
-	wg.Add(1)
 	go func() {
 		ticker := time.NewTicker(flushInterval)
 		writer := bufio.NewWriter(logFile)

@@ -51,7 +51,7 @@ type Event struct {
 }
 
 type request struct {
-	Event         Event
+	event         Event
 	eventStream   chan<- Event
 	catchUpEvents chan *eventHistoryBuffer
 	errs          chan error
@@ -116,7 +116,7 @@ func (c *MessageHub) Message(senderID string, message string) {
 		UserID:     senderID,
 		Message:    message,
 	}
-	req := request{Event: event}
+	req := request{event: event}
 
 	// The messagehub server may already be closed so we
 	// must select over the channels to prevent blocking.
@@ -137,7 +137,7 @@ func (c *MessageHub) Add(userID, sessionID string, streamBuffer int) (<-chan Eve
 		SessionID:  sessionID,
 	}
 	req := request{
-		Event:       event,
+		event:       event,
 		eventStream: eventStream,
 		errs:        make(chan error, 1),
 	}
@@ -169,7 +169,7 @@ func (c *MessageHub) Remove(userID, sessionID string) error {
 		SessionID:  sessionID,
 	}
 	req := request{
-		Event: event,
+		event: event,
 		errs:  make(chan error, 1),
 	}
 	select {
@@ -193,7 +193,7 @@ func (c *MessageHub) Close() error {
 		ChatRoomID: c.id,
 	}
 	req := request{
-		Event: event,
+		event: event,
 		errs:  make(chan error, 1),
 	}
 	select {
@@ -215,9 +215,9 @@ func (c *MessageHub) Close() error {
 func (c *MessageHub) serve() {
 	for req := range c.requests {
 		// handle request based on event type.
-		switch req.Event.Type {
+		switch req.event.Type {
 		case EventTypeMessage:
-			c.broadcast(req.Event)
+			c.broadcast(req.event)
 		case EventTypeAdd:
 			c.add(req)
 		case EventTypeRemove:
@@ -259,7 +259,7 @@ func (c *MessageHub) broadcast(event Event) {
 
 // add handles the add request.
 func (c *MessageHub) add(req request) {
-	event := req.Event
+	event := req.event
 	sessions, ok := c.clients[event.UserID]
 	if !ok {
 		event.Type = EventTypeJoin
@@ -281,7 +281,7 @@ func (c *MessageHub) add(req request) {
 
 // remove handles the remove request.
 func (c *MessageHub) remove(req request) {
-	event := req.Event
+	event := req.event
 	if sessions, ok := c.clients[event.UserID]; ok {
 		if stream, ok := sessions[event.SessionID]; ok {
 			delete(sessions, event.SessionID)
@@ -300,7 +300,7 @@ func (c *MessageHub) remove(req request) {
 
 // close handles the close request.
 func (c *MessageHub) close(req request) {
-	c.broadcast(req.Event)
+	c.broadcast(req.event)
 	for _, sessions := range c.clients {
 		for _, stream := range sessions {
 			close(stream)
