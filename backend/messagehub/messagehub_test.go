@@ -34,6 +34,11 @@ func TestMessageHub(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	_, err = hub.Add("user3", "session1", 10)
+	if err != ErrAlreadyExists {
+		t.Fatal("ErrAlreadyExists should be returned when adding a new session that already exists")
+	}
+
 	user1ReceivedEvents := make([]Event, 0)
 	user2ReceivedEvents1 := make([]Event, 0)
 	user2ReceivedEvents2 := make([]Event, 0)
@@ -72,10 +77,23 @@ func TestMessageHub(t *testing.T) {
 	hub.Message("send-id", "hello")
 
 	// should create "leave" event
-	hub.Remove("user1", "session1")
+	err = hub.Remove("user1", "session1")
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	// should create "remove" event as user2 still has existing session
-	hub.Remove("user2", "session2")
+	err = hub.Remove("user2", "session2")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// attempting to remove the same session again should return an error.
+	err = hub.Remove("user2", "session2")
+	if err != ErrNotFound {
+		t.Fatal("ErrNotFound should be returned when removing a session that does not exist")
+	}
+
 	hub.Message("send-id", "user1 left")
 	hub.Close()
 

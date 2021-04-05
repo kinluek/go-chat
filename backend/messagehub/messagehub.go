@@ -10,6 +10,12 @@ import (
 var (
 	// ErrClosed is returned when an operation is performed on a closed MessageHub.
 	ErrClosed = errors.New("cannot perform operation on closed messagehub")
+
+	// ErrAlreadyExists is returned when trying to add a new session that already exists.
+	ErrAlreadyExists = errors.New("session already exists")
+
+	// ErrNotFound is returned when trying to remove a session that does not exist.
+	ErrNotFound = errors.New("session not found")
 )
 
 const (
@@ -48,7 +54,7 @@ type request struct {
 	Event         Event
 	eventStream   chan<- Event
 	catchUpEvents chan *eventHistoryBuffer
-	done          chan struct{}
+	errs          chan error
 }
 
 // MessageHub represents a chat room and handles the message passing between clients
@@ -133,7 +139,7 @@ func (c *MessageHub) Add(userID, sessionID string, streamBuffer int) (<-chan Eve
 	req := request{
 		Event:       event,
 		eventStream: eventStream,
-		done:        make(chan struct{}),
+		errs:        make(chan error, 1),
 	}
 
 	select {
@@ -144,7 +150,10 @@ func (c *MessageHub) Add(userID, sessionID string, streamBuffer int) (<-chan Eve
 	// the messagehub server may be closed while the request is in
 	// the requests buffer and the done signal may never be received.
 	select {
-	case <-req.done:
+	case err := <-req.errs:
+		if err != nil {
+			return nil, err
+		}
 		return eventStream, nil
 	case <-c.closed:
 		return nil, ErrClosed
@@ -161,7 +170,7 @@ func (c *MessageHub) Remove(userID, sessionID string) error {
 	}
 	req := request{
 		Event: event,
-		done:  make(chan struct{}),
+		errs:  make(chan error, 1),
 	}
 	select {
 	case c.requests <- req:
@@ -169,14 +178,15 @@ func (c *MessageHub) Remove(userID, sessionID string) error {
 	}
 
 	select {
-	case <-req.done:
-		return nil
+	case err := <-req.errs:
+		return err
 	case <-c.closed:
 		return ErrClosed
 	}
 }
 
-// Close closes the the MessageHub.
+// Close closes all the event streams subscribed to the MessageHub before closing
+// the MessageHub itself.
 func (c *MessageHub) Close() error {
 	event := Event{
 		Type:       EventTypeClose,
@@ -184,14 +194,16 @@ func (c *MessageHub) Close() error {
 	}
 	req := request{
 		Event: event,
-		done:  make(chan struct{}),
+		errs:  make(chan error, 1),
 	}
 	select {
 	case c.requests <- req:
 	case <-c.closed:
 	}
+
 	select {
-	case <-req.done:
+	case <-req.errs:
+		close(c.closed)
 		return nil
 	case <-c.closed:
 		return ErrClosed
@@ -202,10 +214,6 @@ func (c *MessageHub) Close() error {
 // through the MessageHub.
 func (c *MessageHub) serve() {
 	for req := range c.requests {
-		c.eventCount++
-		req.Event.ID = c.eventCount
-		req.Event.UnixTime = time.Now().Unix()
-
 		// handle request based on event type.
 		switch req.Event.Type {
 		case EventTypeMessage:
@@ -222,8 +230,16 @@ func (c *MessageHub) serve() {
 }
 
 // broadcast publishes the provided event to all clients in the chat.
+// Only events from successful requests should be broadcasted.
 func (c *MessageHub) broadcast(event Event) {
+
+	// add serial key and timestamp to event.
+	c.eventCount++
+	event.ID = c.eventCount
+	event.UnixTime = time.Now().Unix()
+
 	c.history.push(event)
+
 	if c.listener != nil {
 		c.listener <- event
 	}
@@ -250,15 +266,17 @@ func (c *MessageHub) add(req request) {
 		sessions := make(map[string]chan<- Event)
 		sessions[event.SessionID] = req.eventStream
 		c.clients[event.UserID] = sessions
-		close(req.done)
+		req.errs <- nil
 		c.broadcast(event)
 		return
 	}
 	if _, ok := sessions[event.SessionID]; !ok {
 		sessions[event.SessionID] = req.eventStream
+		req.errs <- nil
 		c.broadcast(event)
+		return
 	}
-	close(req.done)
+	req.errs <- ErrAlreadyExists
 }
 
 // remove handles the remove request.
@@ -268,7 +286,7 @@ func (c *MessageHub) remove(req request) {
 		if stream, ok := sessions[event.SessionID]; ok {
 			delete(sessions, event.SessionID)
 			close(stream)
-			close(req.done)
+			req.errs <- nil
 			if len(sessions) == 0 {
 				event.Type = EventTypeLeave
 				delete(c.clients, event.UserID)
@@ -277,7 +295,7 @@ func (c *MessageHub) remove(req request) {
 			return
 		}
 	}
-	close(req.done)
+	req.errs <- ErrNotFound
 }
 
 // close handles the close request.
@@ -291,5 +309,5 @@ func (c *MessageHub) close(req request) {
 	if c.listener != nil {
 		close(c.listener)
 	}
-	close(c.closed)
+	req.errs <- nil
 }
